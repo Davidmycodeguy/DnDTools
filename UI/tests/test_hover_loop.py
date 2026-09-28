@@ -1,11 +1,11 @@
 from types import SimpleNamespace
 
 from src.models.hover_loop import MOVE_PX, READS_PER_REST, STILL_S, HoverLoop
-from src.models.hover_reader import PanelLine
 
 SCREEN = (3840, 2160)
 TIP = SimpleNamespace(item_id="OccultistRobe_3001", rolls=(), unread=())
 BOX = SimpleNamespace(left=300, right=900, rule_y=500)
+CARD = SimpleNamespace(name="Occultist Robe", value=245)
 
 
 class Clock:
@@ -47,7 +47,7 @@ def _loop(reader=None, enabled=True, active=True, cursor=(2000, 1000)):
         return f"image{region}"
     loop = HoverLoop(cursor=lambda: state.cursor, game_active=lambda: state.active, grab=grab,
                      screen_size=lambda: SCREEN, reader=reader or Reader(),
-                     value_of=lambda tip: [PanelLine("Worth ~245g", "value")], panel=panel,
+                     value_of=lambda tip: CARD, panel=panel,
                      enabled=lambda: state.enabled, clock=clock)
     return loop, clock, panel, state
 
@@ -64,7 +64,7 @@ def test_reads_once_the_cursor_rests_then_shows_the_value_beside_the_tooltip():
     image, cursor, scale = reader.calls[0]
     assert cursor == (2000 - left, 1000 - top) and scale == 1.0
     lines, tooltip, screen = panel.shown[0]
-    assert lines == [PanelLine("Worth ~245g", "value")] and screen == SCREEN
+    assert lines is CARD and screen == SCREEN
     assert tooltip[0] == BOX.left + left and tooltip[2] == BOX.right + left  # back in screen pixels
     loop.step()
     assert len(reader.calls) == 1  # still resting on the same item: nothing re-read

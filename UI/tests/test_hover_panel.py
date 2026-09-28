@@ -1,4 +1,6 @@
-from src.models.hover_panel import GAP_PX, font_px, place_panel
+from PIL import Image
+
+from src.models.hover_panel import GAP_PX, place_panel, premultiplied_bgra
 
 SCREEN = (3840, 2160)
 
@@ -18,6 +20,8 @@ def test_panel_stays_on_screen():
     assert 0 <= x <= SCREEN[0] - 400 and 0 <= y <= SCREEN[1] - 200
 
 
-def test_fonts_scale_with_the_screen():
-    assert font_px(22, 1080) == 22
-    assert font_px(22, 2160) == 44
+
+def test_pixels_go_to_the_window_premultiplied_in_bgra_order():
+    image = Image.new("RGBA", (2, 1))
+    image.putdata([(200, 100, 50, 255), (200, 100, 50, 128)])
+    assert premultiplied_bgra(image) == bytes([50, 100, 200, 255, 25, 50, 100, 128])

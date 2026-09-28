@@ -1,9 +1,7 @@
-from types import SimpleNamespace
-
 import numpy as np
 from PIL import Image
 
-from src.models.hover_reader import PanelLine, TooltipReader, describe_value
+from src.models.hover_reader import TooltipReader
 from src.models.tooltip_parser import ItemIndex
 from src.models.win_ocr import OcrLine
 
@@ -63,34 +61,3 @@ def test_no_rule_means_no_read():
     assert TooltipReader(ocr, INDEX).read(_frame_with_rules(), cursor=(500, 500), scale=1.0) is None
     assert ocr.reads == 0
 
-
-def _tip(rolls=(), unread=()):
-    return SimpleNamespace(title="Occultist Robe", rarity="Uncommon", item_id="OccultistRobe_3001",
-                           rolls=rolls, base=(), unread=unread)
-
-
-def test_describe_value_with_a_model_estimate():
-    estimate = SimpleNamespace(value=245.4, low=190.2, high=301.0, floor=210.0, confidence="high")
-    lines = describe_value(_tip(), estimate, lowest_ask=(180, 12), vendor_price=36)
-    assert lines[0] == PanelLine("Worth ~245g", "value")
-    assert PanelLine("Range 190–301g · high confidence", "detail") in lines
-    assert PanelLine("Lowest ask 180g (12 listed)", "detail") in lines
-    assert lines[-1] == PanelLine("Merchant pays 36g — list it", "verdict")
-
-
-def test_describe_value_says_merchant_when_the_market_pays_less():
-    estimate = SimpleNamespace(value=40, low=30, high=55, floor=33, confidence="medium")
-    lines = describe_value(_tip(), estimate, lowest_ask=None, vendor_price=50)
-    assert lines[-1] == PanelLine("Merchant pays 50g — sell it there", "verdict")
-
-
-def test_describe_value_without_market_data():
-    lines = describe_value(_tip(), None, lowest_ask=None, vendor_price=12)
-    assert lines[0] == PanelLine("No market data yet", "muted")
-    assert lines[-1] == PanelLine("Merchant pays 12g", "verdict")
-
-
-def test_describe_value_flags_unread_stats():
-    estimate = SimpleNamespace(value=100, low=80, high=120, floor=90, confidence="low")
-    lines = describe_value(_tip(unread=("+4% Brand New Stat",)), estimate, lowest_ask=None, vendor_price=0)
-    assert PanelLine("1 stat not read — value may be off", "warning") in lines

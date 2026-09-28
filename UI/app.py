@@ -3053,16 +3053,19 @@ def _hover_values_enabled():
             and not market_lister_job.is_running() and not _sort_is_running())
 
 
-def _hover_value_lines(tip):
-    from src.models.hover_reader import describe_value
+def _hover_card(tip):
+    from src.models.hover_card import build_card
     model = _worth_model()
     estimate = model.predict(tip.item_id, tip.rolls) if model is not None else None
     if estimate is not None and estimate.confidence == "unknown":
         estimate = None
     rows = market_history.active_rows(tip.item_id, HISTORY_MAX_AGE_S) if market_history else []
     units = [row.price / max(row.count, 1) for row in rows]
-    lowest = (min(units), len(units)) if units else None
-    return describe_value(tip, estimate, lowest, int(item_data_manager.get_item_vendor_price(tip.item_id) or 0))
+    sold = len(market_history.vanished_rows(tip.item_id)) if market_history else 0
+    meta = item_data_manager.get_item_data(tip.item_id) or {}
+    slots = int(meta.get("inventory_width") or 1) * int(meta.get("inventory_height") or 1)
+    return build_card(tip, estimate, min(units) if units else None, len(units), sold,
+                      int(meta.get("vendor_price") or 0), slots)
 
 
 def _game_in_front():
@@ -3093,7 +3096,7 @@ def _start_hover_values():
     loop = HoverLoop(
         cursor=_cursor_position, game_active=_game_in_front, grab=lambda region: ImageGrab.grab(bbox=region),
         screen_size=_screen_size, reader=TooltipReader(WindowsOcr(), ItemIndex(item_data_manager.all_items())),
-        value_of=_hover_value_lines, panel=HoverPanel(), enabled=_hover_values_enabled,
+        value_of=_hover_card, panel=HoverPanel(), enabled=_hover_values_enabled,
     )
     def run():
         from src.models.hover_panel import use_physical_pixels

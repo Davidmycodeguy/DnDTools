@@ -27,7 +27,7 @@ class HoverLoop:
         self._grab = grab            # (left, top, right, bottom) screen pixels -> PIL image
         self._screen_size = screen_size
         self._reader = reader        # TooltipReader-like: read(image, cursor, scale)
-        self._value_of = value_of    # ParsedTooltip -> [PanelLine]
+        self._value_of = value_of    # ParsedTooltip -> card for the panel
         self._panel = panel
         self._enabled = enabled
         self._clock = clock
@@ -72,18 +72,18 @@ class HoverLoop:
                   min(width, x + round(SEARCH_X_PX * scale)), min(height, y + round(SEARCH_Y_PX * scale)))
         try:
             found = self._reader.read(self._grab(region), (x - region[0], y - region[1]), scale)
-            lines = self._value_of(found[0]) if found else None
+            card = self._value_of(found[0]) if found else None
         except Exception:  # a bad read must never stop the loop
             logger.exception("Hover value read failed")
-            found, lines = None, None
+            found, card = None, None
         logger.debug("Hover read at %s: %s", position, found[0].item_id if found else "no tooltip")
-        if not found or not lines:
+        if not found or card is None:
             self._hide()
             return False
         box = found[1]
         ox, oy = region[0], region[1]
         tooltip = (box.left + ox, box.rule_y + oy - round(TITLE_HEIGHT_PX * scale), box.right + ox, box.rule_y + oy)
-        self._panel.show(lines, tooltip, (width, height))
+        self._panel.show(card, tooltip, (width, height))
         self._showing = True
         return True
 

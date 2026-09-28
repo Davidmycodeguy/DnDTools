@@ -1,42 +1,34 @@
-"""A small always-on-top panel beside the game's item tooltip, showing the item's value.
+"""The hover value card on screen: an always-on-top window beside the game's item tooltip.
 
-A native layered window, like DnDTools' sort overlay: topmost, click-through, and only ever shown
-with SW_SHOWNOACTIVATE, so the game keeps focus and every input. Its own thread runs the window's
-message loop; show/hide only store the request and post a message.
+A native per-pixel-alpha layered window (UpdateLayeredWindow), so the card's rounded corners and
+soft shadow blend with the game. It is click-through and only ever shown with SW_SHOWNOACTIVATE,
+so the game keeps focus and every input. Its own thread runs the window's message loop and draws;
+show/hide only store the request and post a message.
 """
+import ctypes
 import logging
 import threading
+from ctypes import wintypes
+
+import numpy as np
+
+from src.models.hover_card import render_card
 
 logger = logging.getLogger(__name__)
 
 GAP_PX = 12
-PADDING_PX = 14      # at 1080p; scaled with the screen
-LINE_GAP_PX = 3
-OPACITY = 240
-BACKGROUND, BORDER = (21, 17, 15), (138, 109, 42)
-STYLES = {  # style -> (colour, font px at 1080p, bold)
-    "value": ((228, 200, 105), 22, True),
-    "detail": ((216, 208, 192), 15, False),
-    "verdict": ((156, 204, 101), 16, True),
-    "muted": ((154, 154, 154), 16, False),
-    "warning": ((255, 183, 77), 14, False),
-}
 WM_APP_SHOW, WM_APP_HIDE, WM_APP_CLOSE = 0x8001, 0x8002, 0x8003
 DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 = -4
+AC_SRC_OVER, AC_SRC_ALPHA, ULW_ALPHA = 0x00, 0x01, 0x02
 
 
 def use_physical_pixels():
     """Make this thread see real screen pixels. With display scaling (e.g. 150% on 4K), a
     DPI-unaware thread gets scaled cursor positions and screen sizes that don't match captures."""
     try:
-        import ctypes
         ctypes.windll.user32.SetThreadDpiAwarenessContext(ctypes.c_void_p(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2))
     except (AttributeError, OSError):  # older Windows: the whole process is usually aware already
         pass
-
-
-def font_px(base_px, screen_height):
-    return max(9, round(base_px * screen_height / 1080))
 
 
 def place_panel(size, tooltip, screen):
@@ -52,13 +44,85 @@ def place_panel(size, tooltip, screen):
     return x, y
 
 
+def premultiplied_bgra(image):
+    """Raw BGRA bytes with colour premultiplied by alpha, as UpdateLayeredWindow expects."""
+    rgba = np.asarray(image.convert("RGBA"), dtype=np.uint16)
+    alpha = rgba[..., 3:4]
+    rgb = (rgba[..., :3] * alpha // 255).astype(np.uint8)
+    return np.dstack([rgb[..., 2], rgb[..., 1], rgb[..., 0], rgba[..., 3].astype(np.uint8)]).tobytes()
+
+
+class _BlendFunction(ctypes.Structure):
+    _fields_ = [("BlendOp", ctypes.c_ubyte), ("BlendFlags", ctypes.c_ubyte),
+                ("SourceConstantAlpha", ctypes.c_ubyte), ("AlphaFormat", ctypes.c_ubyte)]
+
+
+class _BitmapInfoHeader(ctypes.Structure):
+    _fields_ = [("biSize", wintypes.DWORD), ("biWidth", wintypes.LONG), ("biHeight", wintypes.LONG),
+                ("biPlanes", wintypes.WORD), ("biBitCount", wintypes.WORD), ("biCompression", wintypes.DWORD),
+                ("biSizeImage", wintypes.DWORD), ("biXPelsPerMeter", wintypes.LONG),
+                ("biYPelsPerMeter", wintypes.LONG), ("biClrUsed", wintypes.DWORD), ("biClrImportant", wintypes.DWORD)]
+
+
+class _BitmapInfo(ctypes.Structure):
+    _fields_ = [("bmiHeader", _BitmapInfoHeader), ("bmiColors", wintypes.DWORD * 3)]
+
+
+def _gdi():  # pragma: no cover - Windows only
+    """user32/gdi32 with handle-safe signatures (64-bit handles must not be truncated to int)."""
+    user32, gdi32 = ctypes.windll.user32, ctypes.windll.gdi32
+    user32.GetDC.restype = wintypes.HDC
+    user32.GetDC.argtypes = [wintypes.HWND]
+    user32.ReleaseDC.argtypes = [wintypes.HWND, wintypes.HDC]
+    user32.UpdateLayeredWindow.argtypes = [wintypes.HWND, wintypes.HDC, ctypes.POINTER(wintypes.POINT),
+                                           ctypes.POINTER(wintypes.SIZE), wintypes.HDC,
+                                           ctypes.POINTER(wintypes.POINT), wintypes.COLORREF,
+                                           ctypes.POINTER(_BlendFunction), wintypes.DWORD]
+    gdi32.CreateCompatibleDC.restype = wintypes.HDC
+    gdi32.CreateCompatibleDC.argtypes = [wintypes.HDC]
+    gdi32.CreateDIBSection.restype = wintypes.HBITMAP
+    gdi32.CreateDIBSection.argtypes = [wintypes.HDC, ctypes.POINTER(_BitmapInfo), wintypes.UINT,
+                                       ctypes.POINTER(ctypes.c_void_p), wintypes.HANDLE, wintypes.DWORD]
+    gdi32.SelectObject.restype = wintypes.HGDIOBJ
+    gdi32.SelectObject.argtypes = [wintypes.HDC, wintypes.HGDIOBJ]
+    gdi32.DeleteObject.argtypes = [wintypes.HGDIOBJ]
+    gdi32.DeleteDC.argtypes = [wintypes.HDC]
+    return user32, gdi32
+
+
+def _blit(hwnd, image, x, y):  # pragma: no cover - Windows only
+    """Put `image` (RGBA) on the layered window at screen (x, y) with per-pixel alpha."""
+    user32, gdi32 = _gdi()
+    width, height = image.size
+    screen_dc = user32.GetDC(None)
+    memory_dc = gdi32.CreateCompatibleDC(screen_dc)
+    info = _BitmapInfo()
+    info.bmiHeader.biSize = ctypes.sizeof(_BitmapInfoHeader)
+    info.bmiHeader.biWidth, info.bmiHeader.biHeight = width, -height  # top-down rows
+    info.bmiHeader.biPlanes, info.bmiHeader.biBitCount = 1, 32
+    bits = ctypes.c_void_p()
+    bitmap = gdi32.CreateDIBSection(memory_dc, ctypes.byref(info), 0, ctypes.byref(bits), None, 0)
+    try:
+        data = premultiplied_bgra(image)
+        ctypes.memmove(bits, data, len(data))
+        old = gdi32.SelectObject(memory_dc, bitmap)
+        blend = _BlendFunction(AC_SRC_OVER, 0, 255, AC_SRC_ALPHA)
+        user32.UpdateLayeredWindow(hwnd, screen_dc, ctypes.byref(wintypes.POINT(x, y)),
+                                   ctypes.byref(wintypes.SIZE(width, height)), memory_dc,
+                                   ctypes.byref(wintypes.POINT(0, 0)), 0, ctypes.byref(blend), ULW_ALPHA)
+        gdi32.SelectObject(memory_dc, old)
+    finally:
+        gdi32.DeleteObject(bitmap)
+        gdi32.DeleteDC(memory_dc)
+        user32.ReleaseDC(None, screen_dc)
+
+
 class HoverPanel:
-    def __init__(self):
+    def __init__(self, render=render_card):
+        self._render = render
         self._lock = threading.Lock()
-        self._request = None     # (lines, tooltip, screen) waiting to be shown
-        self._showing = None     # what is on screen
+        self._request = None     # (card, tooltip, screen) waiting to be shown
         self._hwnd = None
-        self._fonts = {}
         self._ready = threading.Event()
         self._thread = None
 
@@ -78,10 +142,10 @@ class HoverPanel:
             except Exception:
                 logger.debug("Hover panel message failed", exc_info=True)
 
-    def show(self, lines, tooltip, screen):
+    def show(self, card, tooltip, screen):
         self._ensure_started()
         with self._lock:
-            self._request = (list(lines), tuple(tooltip), tuple(screen))
+            self._request = (card, tuple(tooltip), tuple(screen))
         self._post(WM_APP_SHOW)
 
     def hide(self):
@@ -99,54 +163,19 @@ class HoverPanel:
         try:
             wnd_class = win32gui.WNDCLASS()
             wnd_class.hInstance = win32api.GetModuleHandle(None)
-            wnd_class.lpszClassName = "DnDToolsHoverPanel"
+            wnd_class.lpszClassName = "DnDToolsHoverCard"
             wnd_class.lpfnWndProc = self._wnd_proc
-            wnd_class.hbrBackground = win32gui.CreateSolidBrush(win32api.RGB(*BACKGROUND))
             atom = win32gui.RegisterClass(wnd_class)
             ex_style = (win32con.WS_EX_TOPMOST | win32con.WS_EX_LAYERED | win32con.WS_EX_TOOLWINDOW
                         | win32con.WS_EX_TRANSPARENT | win32con.WS_EX_NOACTIVATE)
-            self._hwnd = win32gui.CreateWindowEx(ex_style, atom, "DnDToolsHoverPanel", win32con.WS_POPUP,
+            self._hwnd = win32gui.CreateWindowEx(ex_style, atom, "DnDToolsHoverCard", win32con.WS_POPUP,
                                                  0, 0, 0, 0, 0, 0, wnd_class.hInstance, None)
-            win32gui.SetLayeredWindowAttributes(self._hwnd, 0, OPACITY, win32con.LWA_ALPHA)
         except Exception:
-            logger.exception("Hover panel window could not be created")
+            logger.exception("Hover card window could not be created")
             self._ready.set()
             return
         self._ready.set()
         win32gui.PumpMessages()
-
-    def _font(self, style, screen_height):  # pragma: no cover - GUI thread
-        import win32con
-        import win32gui
-        _, px, bold = STYLES.get(style, STYLES["detail"])
-        key = (style, screen_height)
-        if key not in self._fonts:
-            font = win32gui.LOGFONT()
-            font.lfHeight = -font_px(px, screen_height)
-            font.lfWeight = win32con.FW_BOLD if bold else win32con.FW_NORMAL
-            font.lfQuality = win32con.CLEARTYPE_QUALITY
-            font.lfFaceName = "Segoe UI"
-            self._fonts[key] = win32gui.CreateFontIndirect(font)
-        return self._fonts[key]
-
-    def _layout(self, hwnd, lines, screen_height):  # pragma: no cover - GUI thread
-        """[(line, width, height)] and the panel size for `lines`."""
-        import win32gui
-        hdc = win32gui.GetDC(hwnd)
-        try:
-            measured = []
-            for line in lines:
-                old = win32gui.SelectObject(hdc, self._font(line.style, screen_height))
-                width, height = win32gui.GetTextExtentPoint32(hdc, line.text)
-                win32gui.SelectObject(hdc, old)
-                measured.append((line, width, height))
-        finally:
-            win32gui.ReleaseDC(hwnd, hdc)
-        pad = font_px(PADDING_PX, screen_height)
-        gap = font_px(LINE_GAP_PX, screen_height)
-        width = max((w for _, w, _ in measured), default=0) + 2 * pad
-        height = sum(h for _, _, h in measured) + gap * max(len(measured) - 1, 0) + 2 * pad
-        return measured, (width, height)
 
     def _show_request(self, hwnd):  # pragma: no cover - GUI thread
         import win32con
@@ -155,45 +184,13 @@ class HoverPanel:
             request, self._request = self._request, None
         if request is None:
             return
-        lines, tooltip, screen = request
-        measured, size = self._layout(hwnd, lines, screen[1])
-        x, y = place_panel(size, tooltip, screen)
-        self._showing = (measured, screen[1])
-        win32gui.SetWindowPos(hwnd, win32con.HWND_TOPMOST, x, y, size[0], size[1],
-                              win32con.SWP_NOACTIVATE | win32con.SWP_SHOWWINDOW)
-        win32gui.InvalidateRect(hwnd, None, True)
-
-    def _paint(self, hwnd):  # pragma: no cover - GUI thread
-        import win32api
-        import win32con
-        import win32gui
-        hdc, paint = win32gui.BeginPaint(hwnd)
-        try:
-            rect = win32gui.GetClientRect(hwnd)
-            brush = win32gui.CreateSolidBrush(win32api.RGB(*BACKGROUND))
-            win32gui.FillRect(hdc, rect, brush)
-            win32gui.DeleteObject(brush)
-            pen = win32gui.CreatePen(win32con.PS_SOLID, 2, win32api.RGB(*BORDER))
-            old_pen = win32gui.SelectObject(hdc, pen)
-            old_brush = win32gui.SelectObject(hdc, win32gui.GetStockObject(win32con.NULL_BRUSH))
-            win32gui.Rectangle(hdc, rect[0], rect[1], rect[2], rect[3])
-            win32gui.SelectObject(hdc, old_brush)
-            win32gui.SelectObject(hdc, old_pen)
-            win32gui.DeleteObject(pen)
-            if self._showing:
-                measured, screen_height = self._showing
-                pad, gap = font_px(PADDING_PX, screen_height), font_px(LINE_GAP_PX, screen_height)
-                win32gui.SetBkMode(hdc, win32con.TRANSPARENT)
-                y = pad
-                for line, _, height in measured:
-                    colour = STYLES.get(line.style, STYLES["detail"])[0]
-                    old = win32gui.SelectObject(hdc, self._font(line.style, screen_height))
-                    win32gui.SetTextColor(hdc, win32api.RGB(*colour))
-                    win32gui.ExtTextOut(hdc, pad, y, 0, None, line.text)
-                    win32gui.SelectObject(hdc, old)
-                    y += height + gap
-        finally:
-            win32gui.EndPaint(hwnd, paint)
+        card, tooltip, screen = request
+        image = self._render(card, screen[1])
+        x, y = place_panel(image.size, tooltip, screen)
+        _blit(hwnd, image, x, y)
+        win32gui.ShowWindow(hwnd, win32con.SW_SHOWNOACTIVATE)
+        win32gui.SetWindowPos(hwnd, win32con.HWND_TOPMOST, 0, 0, 0, 0,
+                              win32con.SWP_NOMOVE | win32con.SWP_NOSIZE | win32con.SWP_NOACTIVATE)
 
     def _wnd_proc(self, hwnd, msg, w_param, l_param):  # pragma: no cover - GUI thread
         import win32con
@@ -208,18 +205,10 @@ class HoverPanel:
             if msg == WM_APP_CLOSE:
                 win32gui.DestroyWindow(hwnd)
                 return 0
-            if msg == win32con.WM_PAINT:
-                self._paint(hwnd)
-                return 0
-            if msg == win32con.WM_ERASEBKGND:
-                return 1
             if msg == win32con.WM_DESTROY:
-                for font in self._fonts.values():
-                    win32gui.DeleteObject(font)
-                self._fonts.clear()
                 win32gui.PostQuitMessage(0)
                 return 0
         except Exception:
-            logger.exception("Hover panel message %s failed", msg)
+            logger.exception("Hover card message %s failed", msg)
             return 0
         return win32gui.DefWindowProc(hwnd, msg, w_param, l_param)
