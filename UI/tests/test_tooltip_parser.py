@@ -119,3 +119,18 @@ def test_a_rarity_line_read_without_its_space_still_counts():
     assert looks_like_tooltip([OcrLine("Rarity:Uncommon", 101, 387, 150, 15)])
     assert looks_like_tooltip([OcrLine("Rarity: Epic", 101, 387, 150, 15)])
     assert not looks_like_tooltip([OcrLine("My Listings", 10, 10, 100, 15)])
+
+
+def test_memory_capacity_and_other_bonus_rolls_are_read():
+    from src.models.tooltip_parser import parse_stat
+    assert parse_stat("+7.1% Memory Capacity Bonus") == ("roll", "MemoryCapacityBonus", 71)
+    assert parse_stat("+3 Memory Capacity") == ("roll", "MemoryCapacityAdd", 3)
+    assert parse_stat("+2.5% Max Health Bonus") == ("roll", "MaxHealthBonus", 25)
+
+
+def test_base_stats_beyond_the_basics_are_read():
+    from src.models.tooltip_parser import parse_stat
+    assert parse_stat("Regular Interaction Speed 15.7%") == ("base", "RegularInteractionSpeed", 157)
+    assert parse_stat("Spell Casting Speed 5%") == ("base", "SpellCastingSpeed", 50)
+    assert parse_stat("Magical Power 3") == ("base", "MagicalPower", 3)
+    assert parse_stat("Undead Damage Bonus 4%") == ("base", "UndeadDamageMod", 40)

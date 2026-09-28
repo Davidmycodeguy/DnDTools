@@ -25,6 +25,18 @@ BASE_NAMES = {
     "headshotdamagereduction": "HeadshotReductionMod", "actionspeed": "ActionSpeed", "luck": "Luck",
     "magicaldamage": "MagicalDamage", "strength": "Strength", "vigor": "Vigor", "agility": "Agility",
     "dexterity": "Dexterity", "will": "Will", "knowledge": "Knowledge", "resourcefulness": "Resourcefulness",
+    "physicalpower": "PhysicalPower", "magicalpower": "MagicalPower", "magicalhealing": "MagicalHealing",
+    "regularinteractionspeed": "RegularInteractionSpeed", "magicalinteractionspeed": "MagicalInteractionSpeed",
+    "spellcastingspeed": "SpellCastingSpeed", "buffdurationbonus": "BuffDurationBonus",
+    "debuffdurationbonus": "DebuffDurationBonus", "cooldownreduction": "CooldownReductionBonus",
+    "cooldownreductionbonus": "CooldownReductionBonus", "magicaldamagebonus": "MagicalDamageBonus",
+    "magicaldamagereduction": "MagicalDamageReduction", "physicaldamagereduction": "PhysicalDamageReduction",
+    "truemagicaldamage": "MagicalDamageTrue", "truephysicaldamage": "PhysicalDamageTrue",
+    "undeaddamagebonus": "UndeadDamageMod", "undeaddamagereduction": "UndeadReductionMod",
+    "demondamagebonus": "DemonDamageMod", "demondamagereduction": "DemonReductionMod",
+    "headshotdamage": "HeadshotDamageMod", "headshotdamagebonus": "HeadshotDamageMod",
+    "maxhealth": "MaxHealthAdd", "maxhealthbonus": "MaxHealthBonus", "memorycapacity": "MemoryCapacityAdd",
+    "movespeedbonus": "MoveSpeedBonus",
 }
 # Random rolls ("+value Name"). A few names mean a flat or a % stat depending on the "%".
 ROLL_NAMES = {
@@ -47,6 +59,7 @@ ROLL_NAMES = {
     "demondamagebonus": "DemonDamageMod", "demondamagereduction": "DemonReductionMod", "luck": "Luck",
     "allattributes": "AllAttributes", "strength": "Strength", "vigor": "Vigor", "agility": "Agility",
     "dexterity": "Dexterity", "will": "Will", "knowledge": "Knowledge", "resourcefulness": "Resourcefulness",
+    "memorycapacitybonus": "MemoryCapacityBonus", "maxhealthbonus": "MaxHealthBonus", "movespeedbonus": "MoveSpeedBonus",
 }
 FLAT_OR_PERCENT = {"maxhealth": ("MaxHealthAdd", "MaxHealthBonus"), "movespeed": ("MoveSpeedAdd", "MoveSpeedBonus"),
                    "memorycapacity": ("MemoryCapacityAdd", "MemoryCapacityBonus")}
