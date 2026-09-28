@@ -3078,7 +3078,7 @@ def _hover_item(item_id):
     from src.models.hover_card import ItemFacts, item_kind
     meta = item_data_manager.get_item_data(item_id) or {}
     icon = item_data_manager.get_item_image_path_from_id(item_id)
-    return ItemFacts(kind=item_kind(meta), icon=resource_path(str(icon)) if icon else None,
+    return ItemFacts(kind=item_kind(meta), icon=icon.as_posix() if icon else None,
                      merchant=int(meta.get("vendor_price") or 0),
                      slots=int(meta.get("inventory_width") or 1) * int(meta.get("inventory_height") or 1))
 
@@ -3134,7 +3134,7 @@ def _start_hover_values():
     from src.models.hover_reader import TooltipReader
     from src.models.screen_grab import grab
     from src.models.tooltip_parser import ItemIndex
-    from src.models.win_ocr import OcrError, WindowsOcr
+    from src.models.win_ocr import WindowsOcr
     ocr = WindowsOcr()
     loop = HoverLoop(
         cursor=_cursor_position, game_active=_game_in_front, grab=grab, screen_size=_screen_size,
@@ -3147,9 +3147,8 @@ def _start_hover_values():
         use_physical_pixels()  # cursor, screen size and captures must all be in real pixels
         try:
             ocr.start()  # boot OCR now (~0.5-0.8 s), not on the first hover
-        except OcrError:
-            logger.warning("Hover values are off: Windows text recognition is unavailable", exc_info=True)
-            return
+        except Exception:  # noqa: BLE001 - reads start it again; a failure then shows per hover
+            logger.warning("Windows text recognition didn't start yet; hover values will retry", exc_info=True)
         loop.run(hover_values_stop)
     threading.Thread(target=run, daemon=True, name="HoverValues").start()
 

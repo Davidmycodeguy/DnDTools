@@ -150,16 +150,17 @@ def test_a_new_rest_looks_at_everything_again():
     assert any(r[3] - r[1] <= 21 and r[2] - r[0] > 64 for r in screen.grabs[before:])  # the line measured again
 
 
-def test_a_ui_line_found_to_be_no_tooltip_is_skipped_at_later_rests_too():
+def test_a_ui_line_found_to_be_no_tooltip_at_two_rests_is_skipped_after():
     screen = FakeScreen(_screen_with_rule(color=GREY))
     ocr = FakeOcr([MERCHANT] * 3)
     reader = TooltipReader(ocr, INDEX)
     reader.read_screen(screen, cursor=(1000, 900), scale=1.0, screen=(3000, 2000))
+    reader.read_screen(screen, cursor=(1010, 905), scale=1.0, screen=(3000, 2000))   # a second rest: miss 2
     before = len(screen.grabs)
-    reader.read_screen(screen, cursor=(1010, 905), scale=1.0, screen=(3000, 2000))   # another rest
-    assert ocr.reads == 1
+    reader.read_screen(screen, cursor=(1005, 910), scale=1.0, screen=(3000, 2000))   # a third rest
+    assert ocr.reads == 1                                                            # the same crop: read once
     crop = TooltipBox(1030, 1630, 700, GREY).ocr_region(3000, 2000, 1.0)
-    assert crop not in screen.grabs[before:]                                          # nor grabbed again
+    assert crop not in screen.grabs[before:]                                         # now not even grabbed
 
 
 def test_a_tooltip_that_merely_failed_to_parse_is_read_again_later():
@@ -190,4 +191,39 @@ def test_a_different_line_where_the_rule_was_is_not_the_tooltip():
     _, box = reader.read_screen(screen, cursor=(1000, 900), scale=1.0, screen=(3000, 2000))
     frame[690:712, :] = 8
     frame[700:702, 900:1800] = GREY               # tooltip gone; a grey UI line happens to be on that row
+    assert reader.still_showing(screen, (1000, 900), 1.0, (3000, 2000), box) is False
+
+
+def test_one_bad_read_of_a_real_tooltip_does_not_blacklist_its_spot():
+    garbled = [OcrLine("Occultist Rabe", 98, 19, 162, 18)]          # the Rarity line missed this time
+    frame = _screen_with_rule()
+    screen = FakeScreen(frame)
+    ocr = FakeOcr([garbled, ROBE])
+    reader = TooltipReader(ocr, INDEX)
+    assert reader.read_screen(screen, cursor=(1000, 900), scale=1.0, screen=(3000, 2000)) is None
+    frame[1400:1480, 1100:1200] = (60, 60, 60)                       # next rest: a slightly different capture
+    assert reader.read_screen(screen, cursor=(1010, 905), scale=1.0, screen=(3000, 2000)) is not None
+
+
+def test_a_tooltip_opening_left_is_not_hidden_by_a_ui_line_on_the_right():
+    frame = np.full((2000, 3000, 3), 8, dtype=np.uint8)
+    frame[700:702, 2150:2810] = GREY                                   # a UI line crossing the right strip
+    screen = FakeScreen(frame)
+    ocr = FakeOcr([MERCHANT, ROBE])
+    reader = TooltipReader(ocr, INDEX)
+    assert reader.read_screen(screen, cursor=(2000, 900), scale=1.0, screen=(3000, 2000)) is None
+    frame[706:708, 1150:1910] = (76, 150, 3)                           # the tooltip opens to the left, 6 px lower
+    found = reader.read_screen(screen, cursor=(2000, 900), scale=1.0, screen=(3000, 2000))
+    assert found is not None and found[1].right <= 1910
+
+
+def test_grey_speckle_where_a_common_rule_was_is_not_the_rule():
+    frame = _screen_with_rule(color=GREY)
+    screen = FakeScreen(frame)
+    reader = TooltipReader(FakeOcr([ROBE]), INDEX)
+    _, box = reader.read_screen(screen, cursor=(1000, 900), scale=1.0, screen=(3000, 2000))
+    frame[600:900, 900:1800] = 8                                  # the tooltip closed ...
+    rng = np.random.default_rng(3)
+    speckle = rng.random((300, 900)) < 0.02                       # ... over a lightly speckled background
+    frame[600:900, 900:1800][speckle] = GREY
     assert reader.still_showing(screen, (1000, 900), 1.0, (3000, 2000), box) is False

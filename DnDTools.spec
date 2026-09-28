@@ -7,7 +7,7 @@ a = Analysis(
     ['UI\\app.py'],
     pathex=[],
     binaries=[],
-    datas=[('UI\\networking\\protos', 'networking/protos'), ('UI\\templates', 'templates'), ('UI\\static', 'static'), ('build\\assets_no_icons', 'assets')],
+    datas=[('UI\\networking\\protos', 'networking/protos'), ('UI\\templates', 'templates'), ('UI\\static', 'static'), ('build\\assets_no_icons', 'assets'), ('UI\\src\\models\\win_ocr.ps1', 'src/models')],
     hiddenimports=[
         'asyncio.events',
         'asyncio.windows_events',

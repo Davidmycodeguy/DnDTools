@@ -108,3 +108,28 @@ def test_real_windows_ocr_reads_rendered_text(tmp_path):
     finally:
         ocr.close()
     assert any("Rarity" in t and "Epic" in t for t in texts)
+
+
+def test_a_worker_that_died_is_restarted_on_the_next_read(tmp_path):
+    first = FakeProcess([])
+    second = FakeProcess(['{"ok":true,"lines":[]}'])
+    launched = [first, second]
+    ocr = WindowsOcr(launch=lambda: launched.pop(0), temp_dir=str(tmp_path))
+    ocr.start = lambda: None  # boot lazily in this test
+    first.killed = True        # e.g. antivirus killed the hidden PowerShell
+    first.lines.put(None)
+    with pytest.raises(OcrError):
+        ocr.read(Image.new("RGB", (4, 4)))
+    assert ocr.read(Image.new("RGB", (4, 4))) == [] and not launched
+
+
+def test_writing_to_a_dead_worker_is_an_ocr_error_not_a_crash(tmp_path):
+    class Broken(FakeProcess):
+        def write(self, text):
+            raise OSError(22, "Invalid argument")
+    broken, fresh = Broken([]), FakeProcess(['{"ok":true,"lines":[]}'])
+    launched = [broken, fresh]
+    ocr = WindowsOcr(launch=lambda: launched.pop(0), temp_dir=str(tmp_path))
+    with pytest.raises(OcrError):
+        ocr.read(Image.new("RGB", (4, 4)))
+    assert ocr.read(Image.new("RGB", (4, 4))) == []

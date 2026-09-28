@@ -111,3 +111,11 @@ def test_unmapped_stat_lines_are_reported_not_guessed():
     lines = OCCULTIST_ROBE[:6] + [OcrLine("+4% Brand New Stat", 45, 214, 246, 16)] + OCCULTIST_ROBE[7:]
     tip = parse_tooltip(lines, INDEX, TITLE_BOTTOM)
     assert tip.rolls == () and tip.unread == ("+4% Brand New Stat",)
+
+
+def test_a_rarity_line_read_without_its_space_still_counts():
+    from src.models.tooltip_parser import looks_like_tooltip
+    from src.models.win_ocr import OcrLine
+    assert looks_like_tooltip([OcrLine("Rarity:Uncommon", 101, 387, 150, 15)])
+    assert looks_like_tooltip([OcrLine("Rarity: Epic", 101, 387, 150, 15)])
+    assert not looks_like_tooltip([OcrLine("My Listings", 10, 10, 100, 15)])

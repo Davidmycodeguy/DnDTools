@@ -6,6 +6,7 @@ ladder showing where the item lands among live asks, market facts, and every ran
 quality meter and the gold it adds. Drawn as RGBA (rounded corners, soft shadow) for a
 per-pixel-alpha window. Sizes are designed at 1080p and scaled with the screen.
 """
+import io
 import math
 import os
 import re
@@ -16,6 +17,8 @@ from functools import lru_cache
 import numpy as np
 from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageOps
 
+from src.models.appdirs import resource_path
+from src.models.icon_pak import icon_store
 from src.models.market_rules import listing_fee
 
 RARITY_COLORS = {"Poor": (157, 157, 157), "Common": (230, 230, 230), "Uncommon": (124, 210, 60),
@@ -216,8 +219,7 @@ FONT_DIR = os.path.join(os.environ.get("WINDIR", r"C:\Windows"), "Fonts")
 FONTS = {"title": ("palab.ttf", None), "num": ("bahnschrift.ttf", "SemiBold"), "num_bold": ("bahnschrift.ttf", "Bold"),
          "num_cond": ("bahnschrift.ttf", "SemiBold SemiCondensed"), "text": ("segoeui.ttf", None),
          "semi": ("seguisb.ttf", None), "bold": ("segoeuib.ttf", None), "symbol": ("seguisym.ttf", None)}
-COIN_ICON = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
-                         "assets", "icons", "Misc", "GoldCoins.webp")
+COIN_ICON = "icons/Misc/GoldCoins.webp"
 
 
 @lru_cache(maxsize=128)
@@ -235,11 +237,23 @@ def _font(kind, px):
             return ImageFont.load_default()
 
 
+def _open_icon(path):
+    """An icon ("icons/...") from its file, else from the packed icons (release builds ship icons.pak)."""
+    local = resource_path(path)
+    if os.path.isfile(local):
+        return Image.open(local)
+    data = icon_store.get_bytes(path)
+    return Image.open(io.BytesIO(data)) if data else None
+
+
 @lru_cache(maxsize=64)
 def _icon(path, box):
     """The icon fitted inside a (w, h) box (long items tilted 45° to fill it), or None."""
     try:
-        image = Image.open(path).convert("RGBA")
+        image = _open_icon(path)
+        if image is None:
+            return None
+        image = image.convert("RGBA")
     except (OSError, ValueError, TypeError):
         return None
     if max(image.size) >= 2 * min(image.size):

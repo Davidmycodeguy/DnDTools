@@ -107,6 +107,8 @@ class WindowsOcr:
         self.read(Image.new("RGB", (64, 32)))
 
     def _ensure_running(self):
+        if self._process is not None and self._process.poll() is not None:
+            self._stop()  # it died (killed by antivirus, crashed): start a fresh one
         if self._process is None:
             try:
                 self._start()
@@ -122,8 +124,12 @@ class WindowsOcr:
         try:
             with self._lock:
                 self._ensure_running()
-                self._process.stdin.write(path + "\n")
-                self._process.stdin.flush()
+                try:
+                    self._process.stdin.write(path + "\n")
+                    self._process.stdin.flush()
+                except (OSError, ValueError) as exc:
+                    self._stop()
+                    raise OcrError(f"the OCR worker stopped: {exc}") from exc
                 return parse_answer(self._next_answer(self._timeout))
         finally:
             try:

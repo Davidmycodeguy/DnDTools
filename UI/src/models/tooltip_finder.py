@@ -42,6 +42,7 @@ PROBE_WIDTH_PX = 64
 PROBE_UP_PX = 1800       # a tooltip opening upward ends by the cursor: its rule can be this far up
 PROBE_DOWN_PX = 300      # one opening downward starts by the cursor: its rule is a title bar below
 PROBE_MIN_LIT = 0.9      # a rule lights (nearly) the whole strip; text doesn't
+PROBE_COLUMN_STEP = 4    # strip columns sampled
 RULE_MAX_SPAN_PX = 16    # a rule's two thin lines span ~8 rows; item art lit this wide is a blob
 MAX_PROBE_ROWS = 8       # candidate rules measured per look, nearest the cursor first
 BAND_PX = 10             # rows either side of a candidate grabbed to measure its whole rule
@@ -64,9 +65,15 @@ class TooltipBox:
                 min(frame_width, self.right + pad), min(frame_height, self.rule_y + round(MAX_BODY_PX * scale)))
 
 
+def _extremes(frame):
+    """(brightest, dimmest) channel per pixel, from channel slices (several times faster than max(axis=2))."""
+    red, green, blue = frame[..., 0], frame[..., 1], frame[..., 2]
+    return np.maximum(np.maximum(red, green), blue), np.minimum(np.minimum(red, green), blue)
+
+
 def _rule_masks(frame):
     """(vivid, neutral) masks: rarity-coloured pixels, and bright colourless ones."""
-    high, low = frame.max(axis=2), frame.min(axis=2)  # uint8: high >= low, so no overflow
+    high, low = _extremes(frame)  # uint8: high >= low, so no overflow
     saturation = high - low
     vivid = (saturation >= RULE_MIN_SATURATION) & (high >= RULE_MIN_BRIGHTNESS)
     neutral = (saturation < NEUTRAL_MAX_SATURATION) & (high >= NEUTRAL_MIN_BRIGHTNESS)
@@ -75,7 +82,7 @@ def _rule_masks(frame):
 
 def _dim_mask(frame):
     """Dim, colourless pixels: a Poor rule's grey, below the Common rule's brightness."""
-    high, low = frame.max(axis=2), frame.min(axis=2)
+    high, low = _extremes(frame)
     return (high - low < DIM_MAX_SATURATION) & (high >= DIM_MIN_BRIGHTNESS) & (high < NEUTRAL_MIN_BRIGHTNESS)
 
 
@@ -152,6 +159,7 @@ def rule_rows(strip, scale=1.0):
     """Rows of `strip` crossed end to end by a title rule: the top row of each thin lit cluster."""
     if strip.size == 0:
         return []
+    strip = strip[:, ::PROBE_COLUMN_STEP]  # a rule crossing the strip lights every column: a sample is plenty
     vivid, neutral = _rule_masks(strip)
     lit = np.flatnonzero((vivid | neutral).mean(axis=1) >= PROBE_MIN_LIT).tolist()
     group, span = max(2, round(RULE_GROUP_PX * scale)), max(4, round(RULE_MAX_SPAN_PX * scale))
@@ -181,10 +189,10 @@ def _double_dim_rows(strip, scale):
 
 
 def probe(grab, cursor, scale, screen):
-    """[(screen row, signature)] of rule candidates crossing the probe strips, nearest the cursor
-    first. The signature fingerprints what the strip shows around that row, so a caller can skip a
-    row it already found to be no tooltip (a fixed UI line) until those pixels change."""
-    group = max(2, round(RULE_GROUP_PX * scale))
+    """[(screen row, signature)] of rule candidates crossing the probe strips, likeliest first. The
+    signature fingerprints what that strip shows around the row, so a caller can skip a row it
+    already found to be no tooltip (a fixed UI line) until those pixels change. Each strip keeps its
+    own rows: a line on one side must not hide a tooltip opening on the other."""
     below = max(8, round(2 * RULE_MAX_SPAN_PX * scale))
     strips = probe_strips(cursor, scale, screen)
     if not strips:
@@ -197,10 +205,18 @@ def probe(grab, cursor, scale, screen):
     for index, region in enumerate(strips):
         pixels = both[:, region[0] - box[0]:region[2] - box[0]]
         for row in rule_rows(pixels, scale):
-            if all(abs(region[1] + row - seen) > group for seen, _ in rows):
-                patch = np.ascontiguousarray(pixels[max(0, row - 2):row + below])
-                rows.append((region[1] + row, (index, region[1] + row, hashlib.sha1(patch.tobytes()).digest())))
-    return sorted(rows, key=lambda r: abs(r[0] - cursor[1]))[:MAX_PROBE_ROWS]
+            patch = np.ascontiguousarray(pixels[max(0, row - 2):row + below])
+            rows.append((region[1] + row, (index, region[1] + row, hashlib.sha1(patch.tobytes()).digest())))
+    near = row_nearness(cursor, scale)
+    return sorted(rows, key=lambda r: near(r[0]))
+
+
+def row_nearness(cursor, scale):
+    """Sort key for a rule row: how far the cursor is from where that tooltip's body would be (a
+    tooltip opening upward has its rule far above the item it describes)."""
+    cy = cursor[1]
+    title, body = round(TITLE_HEIGHT_PX * scale), round(TYPICAL_BODY_PX * scale)
+    return lambda row: max(row - title - cy, 0, cy - (row + body))
 
 
 def measure(grab, row, cursor, scale, screen, limit=3):
@@ -235,7 +251,7 @@ def find_near_cursor(grab, cursor, scale, screen, limit=3):
     `grab(region)` returns that region's pixels as an RGB array."""
     group = max(2, round(RULE_GROUP_PX * scale))
     boxes = []
-    for row, _ in probe(grab, cursor, scale, screen):
+    for row, _ in probe(grab, cursor, scale, screen)[:MAX_PROBE_ROWS]:
         for box in measure(grab, row, cursor, scale, screen, limit):
             if not any(abs(box.rule_y - b.rule_y) <= group and box.left < b.right and box.right > b.left for b in boxes):
                 boxes.append(box)
@@ -249,7 +265,8 @@ def rule_still_there(pixels, color):
         return False
     vivid, neutral = _rule_masks(pixels)
     same = np.abs(pixels.astype(np.int16) - np.asarray(color, dtype=np.int16)).max(axis=2) <= RULE_COLOR_TOLERANCE
-    return bool(((vivid | neutral | _dim_mask(pixels)) & same).any(axis=0).mean() >= RULE_MIN_VISIBLE)
+    # Along one row: another overlay may hide part of the rule, but scattered specks aren't a rule.
+    return bool(((vivid | neutral | _dim_mask(pixels)) & same).mean(axis=1).max() >= RULE_MIN_VISIBLE)
 
 
 def find_tooltip(frame, cursor, scale=1.0):

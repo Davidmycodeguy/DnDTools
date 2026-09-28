@@ -146,3 +146,18 @@ def test_the_fast_sale_is_what_the_lister_would_list_at_when_known():
     assert (card.fast_sale, card.net) == (275, 260)  # fee: 5% of 275 rounded up = 14g
     card = build_card(TIP, _estimate(), MarketFacts(asks=(280, 330)), SHOP)
     assert card.fast_sale == 310                     # no listing price: the model's lowest reasonable price
+
+
+def test_icons_come_from_the_packed_icons_when_there_is_no_file(monkeypatch):
+    import io
+
+    from PIL import Image
+
+    from src.models import hover_card
+    buffer = io.BytesIO()
+    Image.new("RGBA", (90, 180), (200, 40, 40, 255)).save(buffer, format="PNG")
+    packed = {"icons/Weapon/PakOnly_5001.webp": buffer.getvalue()}
+    monkeypatch.setattr(hover_card, "icon_store", type("Store", (), {"get_bytes": lambda self, p: packed.get(p)})())
+    hover_card._icon.cache_clear()
+    assert hover_card._icon("icons/Weapon/PakOnly_5001.webp", (40, 40)) is not None
+    assert hover_card._icon("icons/Weapon/Missing_5001.webp", (40, 40)) is None

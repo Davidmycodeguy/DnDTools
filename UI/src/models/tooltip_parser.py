@@ -54,7 +54,7 @@ FLAT_OR_PERCENT = {"maxhealth": ("MaxHealthAdd", "MaxHealthBonus"), "movespeed":
 _NUMBER = r"[\dIl|Oo]+(?:[.,]\d+)?"
 ROLL_LINE = re.compile(rf"^\+\s*(?P<num>{_NUMBER})\s*(?P<pct>%)?\s*(?P<name>[A-Za-z].*)$")
 BASE_LINE = re.compile(rf"^(?P<name>[A-Za-z][A-Za-z' ]*?)\s+(?P<num>-?\s*{_NUMBER})\s*(?P<pct>%|f)?$")
-RARITY_LINE = re.compile(r"^rar\S*\s*(?P<word>[a-z]*)", re.IGNORECASE)
+RARITY_LINE = re.compile(r"^rar[a-z]*\W*(?P<word>[a-z]*)", re.IGNORECASE)  # "Rarity: Epic" or "Rarity:Epic"
 EDGE_DASHES = re.compile(r"^-\s+|\s+-$")
 
 
