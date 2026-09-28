@@ -61,3 +61,10 @@ nodejs/.env
 UI/assets/starter_data/
 # Written by the asset updater when updates are enabled
 UI/assets/.asset_manifest.json
+
+# AI assistant files stay local
+.claude/
+.superpowers/
+CLAUDE.md
+CLAUDE.local.md
+.mcp.json
