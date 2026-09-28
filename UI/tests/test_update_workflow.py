@@ -107,20 +107,6 @@ def test_checksums_fail_closed_and_commit_stages_only_allowed_assets():
     assert "git push origin HEAD:main" in persist_step
 
 
-def test_webhook_failure_is_reported_as_workflow_failure():
-    text = _workflow_text()
-    webhook = text.split("    - name: Notify website of asset update", 1)[1].split(
-        "    - name: Report item refresh failure", 1
-    )[0]
-
-    assert "RELEASE_WEBHOOK_SECRET is not configured" in webhook
-    assert "--retry-all-errors" in webhook
-    assert '[[ ! "$HTTP_CODE" =~ ^2[0-9][0-9]$ ]]' in webhook
-    assert "Website notification failed" in webhook
-    assert "exit 1" in webhook
-    assert "Warning: Failed to notify" not in webhook
-
-
 def test_start_update_clears_in_progress_when_manifest_fetch_raises(monkeypatch):
     manager = UpdateManager("1.0.0", "https://updates.example/manifest.json")
 

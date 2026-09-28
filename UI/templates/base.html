@@ -10,6 +10,7 @@
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/utils.css') }}">
     {% block head %}{% endblock %}
+    <script>window.PRODUCT = {{ product|tojson }};</script>
     <!-- Hide loading overlay on tab switches (only show on very first app launch) -->
     <script>
         if (sessionStorage.getItem('dnd-app-loaded')) {

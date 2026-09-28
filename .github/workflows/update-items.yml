@@ -798,41 +798,6 @@ jobs:
         rm -f "$release_response"
         echo "Published and verified ${#ASSET_PATHS[@]} canonical assets"
 
-    - name: Notify website of asset update
-      if: always() && steps.publish_assets.outcome == 'success'
-      env:
-        SECRET: ${{ secrets.RELEASE_WEBHOOK_SECRET }}
-      run: |
-        set -euo pipefail
-        if [ -z "${SECRET:-}" ]; then
-          echo "RELEASE_WEBHOOK_SECRET is not configured" >&2
-          exit 1
-        fi
-        response_file=$(mktemp)
-        trap 'rm -f "$response_file"' EXIT
-        if ! HTTP_CODE=$(curl -sS \
-          --retry 3 \
-          --retry-all-errors \
-          --connect-timeout 10 \
-          --max-time 30 \
-          -o "$response_file" \
-          -w "%{http_code}" \
-          -X POST \
-          "https://dndtools.rrmtools.uk/api/assets-notify" \
-          -H "Authorization: Bearer ${SECRET}" \
-          -H "Content-Type: application/json" \
-          -H "User-Agent: DnDTools-CI/2.0" \
-          -d '{"source":"update-items","release":"assets-latest"}'); then
-          echo "Website notification request failed" >&2
-          exit 1
-        fi
-        if [[ ! "$HTTP_CODE" =~ ^2[0-9][0-9]$ ]]; then
-          echo "Website notification failed with HTTP ${HTTP_CODE}" >&2
-          sed -n '1,20p' "$response_file" >&2
-          exit 1
-        fi
-        echo "Website notified (HTTP ${HTTP_CODE})"
-
     - name: Report item refresh failure
       if: >-
         always() &&

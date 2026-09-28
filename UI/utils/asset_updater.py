@@ -14,11 +14,8 @@ from typing import Callable, Iterable, Mapping, Optional, Sequence
 
 import requests
 
-DEFAULT_ASSET_MANIFEST_URL = (
-    os.environ.get("DND_ASSET_MANIFEST_URL")
-    or os.environ.get("DND_ASSET_RELEASE_URL")
-    or "https://dndtools.rrmtools.uk/api/assets/manifest.json"
-)
+# No default server: assets ship with the app. Set one of these to publish updates from our releases.
+DEFAULT_ASSET_MANIFEST_URL = os.environ.get("DND_ASSET_MANIFEST_URL") or os.environ.get("DND_ASSET_RELEASE_URL") or ""
 MANIFEST_CACHE_FILENAME = ".asset_manifest.json"
 PUBLISHED_ASSET_FILENAMES = frozenset({
     "changelog.json",
@@ -57,9 +54,8 @@ class AssetUpdater:
         self.logger = logger or logging.getLogger(__name__)
         self.window_getter = window_getter
         resolved_manifest_url = manifest_url or base_url or DEFAULT_ASSET_MANIFEST_URL
-        self.manifest_url = str(resolved_manifest_url).strip()
-        if not self.manifest_url:
-            raise ValueError("Manifest URL must not be empty")
+        self.manifest_url = str(resolved_manifest_url or "").strip()
+        self.enabled = bool(self.manifest_url)  # no manifest: the assets shipped with the app are used as-is
         if base_url and not manifest_url:
             self.logger.debug("AssetUpdater base_url parameter is deprecated; using it as manifest URL")
         self.session = session or requests.Session()
@@ -77,7 +73,10 @@ class AssetUpdater:
     # Public API
     # ------------------------------------------------------------------
     def start_async_update(self) -> bool:
-        """Start the asset refresh worker if it is not already running."""
+        """Start the asset refresh worker if it is not already running (and updates are on)."""
+        if not self.enabled:
+            self.logger.info("Asset updates are off: using the assets shipped with the app")
+            return False
         with self._lock:
             if self._worker and self._worker.is_alive():
                 self.logger.debug("Asset updater already running; skipping duplicate request")

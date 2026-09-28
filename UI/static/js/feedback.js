@@ -3,7 +3,7 @@
    ═══════════════════════════════════════════════════════════ */
 (function () {
     function init() {
-        const FEEDBACK_URL = 'https://dndtools.rrmtools.uk/api/feedback';
+        const ISSUES_URL = (window.PRODUCT && window.PRODUCT.issuesUrl) || '';
 
         let selectedType = 'idea';
 
@@ -47,47 +47,23 @@
                 return;
             }
 
-            submitBtn.disabled = true;
-            submitBtn.innerHTML = '<span class="material-icons" style="animation:spin .8s linear infinite">hourglass_top</span> Sending…';
-
+            // Feedback goes to our GitHub issues, pre-filled, in the user's own browser: nothing is sent
+            // anywhere until they press "Submit new issue" there.
+            let appVersion = null;
             try {
-                // Try to get app version from pywebview API
-                let appVersion = null;
-                try {
-                    if (window.pywebview && window.pywebview.api && typeof window.pywebview.api.get_app_version === 'function') {
-                        appVersion = await window.pywebview.api.get_app_version();
-                    }
-                } catch (_) { /* ignore */ }
-
-                const body = {
-                    type: selectedType,
-                    message,
-                    contact: contactEl.value.trim() || null,
-                    appVersion,
-                };
-
-                const res = await fetch(FEEDBACK_URL, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(body),
-                });
-
-                const data = await res.json();
-
-                if (data.success) {
-                    formCard.style.display = 'none';
-                    typeRow.style.display = 'none';
-                    successEl.style.display = 'flex';
-                } else {
-                    showNotification(data.error || 'Something went wrong. Please try again.', 'error');
+                if (window.pywebview && window.pywebview.api && typeof window.pywebview.api.get_app_version === 'function') {
+                    appVersion = await window.pywebview.api.get_app_version();
                 }
-            } catch (err) {
-                console.error('Feedback submit error:', err);
-                showNotification('Could not reach the server. Check your internet connection.', 'error');
-            } finally {
-                submitBtn.disabled = false;
-                submitBtn.innerHTML = '<span class="material-icons">send</span> <span>Submit Feedback</span>';
-            }
+            } catch (_) { /* ignore */ }
+            const title = `[${selectedType === 'bug' ? 'Bug' : 'Idea'}] ${message.split('\n')[0].slice(0, 70)}`;
+            const lines = [message, '', '---', `App version: ${appVersion || 'unknown'}`];
+            const contact = contactEl.value.trim();
+            if (contact) lines.push(`Contact: ${contact}`);
+            const url = `${ISSUES_URL}/new?title=${encodeURIComponent(title)}&body=${encodeURIComponent(lines.join('\n'))}`;
+            window.open(url, '_blank', 'noopener');
+            formCard.style.display = 'none';
+            typeRow.style.display = 'none';
+            successEl.style.display = 'flex';
         });
 
         // Reset form

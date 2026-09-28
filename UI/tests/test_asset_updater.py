@@ -12,6 +12,8 @@ from utils.asset_updater import (
 )
 
 
+TEST_MANIFEST = "https://assets.example/manifest.json"
+
 def _manifest_entry(name, **overrides):
     entry = {
         "name": name,
@@ -68,7 +70,7 @@ def test_download_closes_staging_descriptor_when_request_fails(tmp_path, monkeyp
             raise requests.ConnectionError("offline")
 
     monkeypatch.setattr("utils.asset_updater.tempfile.mkstemp", capture_mkstemp)
-    updater = AssetUpdater(tmp_path / "assets", session=FailingSession())
+    updater = AssetUpdater(tmp_path / "assets", manifest_url=TEST_MANIFEST, session=FailingSession())
 
     with pytest.raises(RuntimeError, match="Failed to download items.json"):
         updater._download_asset(_manifest_entry("items.json"))
@@ -94,7 +96,7 @@ def test_download_closes_staging_descriptor_when_request_fails(tmp_path, monkeyp
     ],
 )
 def test_manifest_rejects_paths_outside_published_asset_allowlist(tmp_path, manifest_path):
-    updater = AssetUpdater(tmp_path / "assets")
+    updater = AssetUpdater(tmp_path / "assets", manifest_url=TEST_MANIFEST)
 
     with pytest.raises(RuntimeError):
         updater._extract_manifest_files({
@@ -103,7 +105,7 @@ def test_manifest_rejects_paths_outside_published_asset_allowlist(tmp_path, mani
 
 
 def test_manifest_accepts_each_known_root_level_asset(tmp_path):
-    updater = AssetUpdater(tmp_path / "assets")
+    updater = AssetUpdater(tmp_path / "assets", manifest_url=TEST_MANIFEST)
     manifest = {
         "files": [
             _manifest_entry(name)
@@ -117,7 +119,7 @@ def test_manifest_accepts_each_known_root_level_asset(tmp_path):
 
 
 def test_manifest_rejects_duplicate_destination(tmp_path):
-    updater = AssetUpdater(tmp_path / "assets")
+    updater = AssetUpdater(tmp_path / "assets", manifest_url=TEST_MANIFEST)
 
     with pytest.raises(RuntimeError, match="duplicate asset path"):
         updater._extract_manifest_files({
@@ -140,7 +142,7 @@ def test_manifest_rejects_duplicate_destination(tmp_path):
     ],
 )
 def test_manifest_rejects_unverifiable_or_oversized_asset(tmp_path, overrides):
-    updater = AssetUpdater(tmp_path / "assets")
+    updater = AssetUpdater(tmp_path / "assets", manifest_url=TEST_MANIFEST)
 
     with pytest.raises(RuntimeError):
         updater._extract_manifest_files({
@@ -423,3 +425,10 @@ def test_apply_rejects_duplicate_batch_before_mutating_any_asset(tmp_path):
     assert target.read_text(encoding="utf-8") == "old items"
     assert first.exists()
     assert second.exists()
+
+
+def test_without_a_manifest_url_asset_updates_are_off(tmp_path):
+    from utils.asset_updater import AssetUpdater
+    updater = AssetUpdater(assets_dir=tmp_path, manifest_url="")
+    assert updater.enabled is False
+    assert updater.start_async_update() is False  # assets ship with the app; nothing is downloaded

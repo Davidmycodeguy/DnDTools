@@ -59,3 +59,5 @@ nodejs/.env
 
 # Starter data is exported at release time (UI/scripts/export_starter_data.py)
 UI/assets/starter_data/
+# Written by the asset updater when updates are enabled
+UI/assets/.asset_manifest.json

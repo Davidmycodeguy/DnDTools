@@ -458,7 +458,7 @@ function maybeShowUpdatePopup(data, { fromCache = false } = {}) {
         return;
     }
 
-    const releaseUrl = data.downloadUrl || 'https://github.com/Beelzebub2/DnDTools/releases/latest';
+    const releaseUrl = data.downloadUrl || (window.PRODUCT && window.PRODUCT.releasesUrl) || '';
     const notes = data.notes || '';
 
     showUpdatePopup(

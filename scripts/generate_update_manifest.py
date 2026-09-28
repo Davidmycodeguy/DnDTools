@@ -81,11 +81,21 @@ def _normalize_channel(value: Optional[str]) -> str:
     return "stable"
 
 
+def _repository() -> str:
+    """The GitHub repository releases live in: the one the workflow runs in, else UI/src/product.py."""
+    repo = os.environ.get("GITHUB_REPOSITORY")
+    if repo:
+        return repo
+    product = Path(__file__).resolve().parents[1] / "UI" / "src" / "product.py"
+    match = re.search(r'^GITHUB_REPO = "([^"]+)"', product.read_text(encoding="utf-8"), re.M)
+    return match.group(1)
+
+
 def _build_manifest(version: str, release_tag: str, exe_path: Path, channel: str) -> dict[str, str]:
     return {
         "version": version,
         "notes": f"Release {release_tag}",
-        "url": f"https://github.com/Beelzebub2/DnDTools/releases/download/{release_tag}/DnDTools-Setup-{version}.exe",
+        "url": f"https://github.com/{_repository()}/releases/download/{release_tag}/DnDTools-Setup-{version}.exe",
         "sha256": _sha256(exe_path),
         "release_tag": release_tag,
         "channel": channel,

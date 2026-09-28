@@ -28,6 +28,8 @@ from urllib.parse import urlparse
 import psutil
 import requests
 
+from src import product
+
 
 LOGGER = logging.getLogger("dndtools.update")
 
@@ -248,7 +250,7 @@ class UpdateManager:
     def _fetch_release_list(self, *, per_page: int = 20) -> Optional[list[dict[str, Any]]]:
         try:
             response = requests.get(
-                "https://api.github.com/repos/Beelzebub2/DnDTools/releases",
+                product.RELEASES_API,
                 headers={"User-Agent": "DnDTools-Updater"},
                 params={"per_page": per_page},
                 timeout=15,
@@ -313,7 +315,7 @@ class UpdateManager:
     def _fetch_manifest_from_github_latest(self) -> Optional[dict[str, Any]]:
         try:
             api_response = requests.get(
-                "https://api.github.com/repos/Beelzebub2/DnDTools/releases/latest",
+                product.LATEST_RELEASE_API,
                 headers={"User-Agent": "DnDTools-Updater"},
                 timeout=15,
             )

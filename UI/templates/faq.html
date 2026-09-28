@@ -2,71 +2,35 @@
 
 {% block head %}
 <style>
-    .faq-webview-wrapper {
-        width: 100%;
-        height: calc(100vh - 32px - 40px);
-        display: flex;
-        flex-direction: column;
-        overflow: hidden;
-    }
-
-    .faq-webview-wrapper iframe {
-        flex: 1;
-        width: 100%;
-        border: none;
-        border-radius: 12px;
-        background: #0c0e14;
-    }
-
-    .faq-webview-fallback {
-        display: none;
-        flex-direction: column;
-        align-items: center;
-        justify-content: center;
-        gap: 1rem;
-        padding: 3rem;
-        text-align: center;
-        color: var(--text-secondary, #8a8a8a);
-    }
-
-    .faq-webview-fallback .material-icons {
-        font-size: 2.5rem;
-        color: var(--accent-gold, #cfa346);
-    }
-
-    .faq-webview-fallback a {
-        color: var(--accent-gold, #cfa346);
-        text-decoration: underline;
-    }
+    .help-page { max-width: 820px; margin: 0 auto; padding: 1.5rem 1rem 3rem; display: flex; flex-direction: column; gap: 1rem; }
+    .help-card { background: var(--bg-secondary, #151821); border: 1px solid var(--border-color, #2a2a2a); border-radius: 12px; padding: 1.1rem 1.25rem; }
+    .help-card h2 { margin: 0 0 .4rem; font-size: 1.05rem; color: var(--accent-gold, #cfa346); display: flex; align-items: center; gap: .5rem; }
+    .help-card p { margin: 0; color: var(--text-secondary, #8a8a8a); line-height: 1.55; }
+    .help-card a { color: var(--accent-gold, #cfa346); }
 </style>
 {% endblock %}
 
 {% block content %}
-<div class="faq-webview-wrapper">
-    <iframe id="faq-frame" src="https://dndtools.rrmtools.uk/faq" loading="eager"
-        sandbox="allow-scripts allow-same-origin allow-popups" title="Q&amp;A"></iframe>
-    <div class="faq-webview-fallback" id="faq-fallback">
-        <span class="material-icons">wifi_off</span>
-        <p>Couldn't load the Q&amp;A page. Make sure you're connected to the internet.</p>
-        <a href="https://dndtools.rrmtools.uk/faq" target="_blank" rel="noopener">Open in browser instead</a>
+<div class="help-page">
+    <div class="help-card">
+        <h2><span class="material-icons">storefront</span>Market tools</h2>
+        <p>Crawling market prices, the auto lister, selling to merchants and collecting payouts are explained in the
+            <a href="{{ product.docsUrl }}/market-lister.md" target="_blank" rel="noopener">market tools guide</a>.</p>
+    </div>
+    <div class="help-card">
+        <h2><span class="material-icons">sell</span>Item values in game</h2>
+        <p>Rest the cursor on any item and a card beside the game's tooltip shows its value for those exact rolls, a
+            fast-sale price, what a merchant pays and how each roll changes the price. Turn it on or off on the Market page.</p>
+    </div>
+    <div class="help-card">
+        <h2><span class="material-icons">lock</span>Does anything get sent online?</h2>
+        <p>No. Your stash, market data, sorting and calibration stay on this PC. The app only goes online to check
+            <a href="{{ product.releasesUrl }}" target="_blank" rel="noopener">our releases</a> for updates.</p>
+    </div>
+    <div class="help-card">
+        <h2><span class="material-icons">bug_report</span>Found a problem or have an idea?</h2>
+        <p>Use the Feedback page, or open an issue on
+            <a href="{{ product.issuesUrl }}" target="_blank" rel="noopener">GitHub</a>.</p>
     </div>
 </div>
-<script>
-    (function () {
-        var frame = document.getElementById('faq-frame');
-        var fallback = document.getElementById('faq-fallback');
-        var timeout = setTimeout(function () {
-            frame.style.display = 'none';
-            fallback.style.display = 'flex';
-        }, 10000);
-        frame.addEventListener('load', function () {
-            clearTimeout(timeout);
-        });
-        frame.addEventListener('error', function () {
-            clearTimeout(timeout);
-            frame.style.display = 'none';
-            fallback.style.display = 'flex';
-        });
-    })();
-</script>
 {% endblock %}

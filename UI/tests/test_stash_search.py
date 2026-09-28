@@ -700,7 +700,7 @@ assert list(Path(character.data_dir).glob(".*.tmp")) == []
     assert result.returncode == 0, result.stderr or result.stdout
 
 
-def test_sort_sync_opt_out_controls_network_worker_and_reenable_triggers_sync(tmp_path):
+def test_sort_learning_opt_in_starts_the_worker_and_trains_locally(tmp_path):
     harness = r"""
 import sys
 from pathlib import Path
@@ -730,7 +730,6 @@ service = SortSyncService(
     app_version="test",
     model=Model(model_dir),
     event_store=object(),
-    base_url="https://example.invalid/api",
 )
 assert service._enabled() is False
 
@@ -745,7 +744,6 @@ assert service._enabled() is True
 settings.data["sortFeedbackSyncEnabled"] = False
 service.apply_settings({"sortFeedbackSyncEnabled": False})
 assert service._enabled() is False
-service._session.close()
 """
 
     result = subprocess.run(

@@ -2,6 +2,7 @@ import ctypes
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
 
+from src import product
 from src.models.appdirs import resource_path, get_resource_dir, get_templates_dir, get_static_dir, migrate_data_files, get_characters_dir, get_data_dir
 from src.models.settings import (
     settings_manager,
@@ -54,10 +55,7 @@ version_cache_timestamp = 0
 VERSION_CACHE_DURATION = 6 * 60 * 60  # 6 hours in seconds
 
 APP_VERSION = "3.9.12"
-UPDATE_MANIFEST_URL = os.environ.get(
-    "DND_UPDATE_MANIFEST",
-    "https://github.com/Beelzebub2/DnDTools/releases/latest/download/update-manifest.json",
-)
+UPDATE_MANIFEST_URL = os.environ.get("DND_UPDATE_MANIFEST", product.UPDATE_MANIFEST_URL)
 UPDATE_CACHE_DURATION = 5 * 60
 AUTO_UPDATE_SILENT = os.environ.get("DND_UPDATE_SILENT", "1").lower() not in {"0", "false", "no", "off"}
 SORT_CANCEL_NOTIFICATION_MESSAGE = (
@@ -319,6 +317,7 @@ else:
         return {
             'close_to_tray_enabled': settings_manager.get('closeToTrayEnabled', True),
             'developer_mode_enabled': settings_manager.get('developerMode', False),
+            'product': product.for_pages(),
         }
 
     # Initialize StashManager with explicit path, but defer actual data loading
@@ -645,7 +644,6 @@ class Api:
         self._game_process_cache = False
         self._game_process_cache_timestamp = 0.0
         self._last_window_fallback_scan = 0.0
-        self._active_ping_service = None
         self._game_monitor_stop = threading.Event()
         self._game_monitor_thread: Optional[threading.Thread] = None
         self._game_was_running = False
@@ -785,22 +783,11 @@ class Api:
         Called from background_init() so the window renders as fast as
         possible.
         """
-        from utils.active_ping import ActivePingService
-
         # System tray (imports pystray + PIL lazily)
         self._initialize_tray_manager()
 
         # Game window watcher
         self._initialize_game_monitor()
-
-        # Active ping
-        self._active_ping_service = ActivePingService(
-            settings_manager=self.settings_manager,
-            app_version=APP_VERSION,
-            logger=logger,
-        )
-        self._active_ping_service.set_developer_mode(self._developer_mode_enabled)
-        self._active_ping_service.start()
 
         # Sort sync / ML service
         try:
@@ -1647,10 +1634,6 @@ class Api:
             if previous_dev_mode is None or new_dev_mode != previous_dev_mode:
                 self._developer_mode_enabled = new_dev_mode
                 self._apply_logging_preferences(new_dev_mode)
-                try:
-                    self._active_ping_service.set_developer_mode(new_dev_mode)
-                except Exception as exc:
-                    logger.debug("Unable to update active ping developer mode flag: %s", exc)
 
             previous_close_to_tray = None
             if isinstance(previous_settings, dict) and 'closeToTrayEnabled' in previous_settings:
@@ -2416,11 +2399,6 @@ class Api:
                 logger.debug("Single-instance guard release failed: %s", exc)
 
         # ── 3. Stop lightweight services ────────────────────────────────
-        try:
-            self._active_ping_service.stop()
-        except Exception:
-            pass
-
         if self._sort_feedback_sync_service:
             try:
                 self._sort_feedback_sync_service.stop()
@@ -2654,7 +2632,6 @@ class Api:
         def _run():
             try:
                 from src.models.calibration_overlay import run_calibration_overlay
-                import requests as http_requests
 
                 result = run_calibration_overlay()
 
@@ -2708,33 +2685,10 @@ class Api:
                 except Exception as exc:
                     logger.error("Failed to persist calibration locally: %s", exc, exc_info=True)
 
-                # Submit to website (best-effort)
-                submitted = False
-                try:
-                    payload = {
-                        'resolution': result['resolution'],
-                        'stash': result['stash'],
-                        'inv': result['inv'],
-                        'jump': result.get('jump'),
-                        'originalStash': result.get('originalStash'),
-                        'originalInv': result.get('originalInv'),
-                        'originalJump': result.get('originalJump'),
-                        'appVersion': APP_VERSION,
-                    }
-                    resp = http_requests.post(
-                        'https://dndtools.rrmtools.uk/api/calibration',
-                        json=payload,
-                        headers={'User-Agent': 'DnDTools-Calibration', 'Content-Type': 'application/json'},
-                        timeout=10,
-                    )
-                    submitted = resp.status_code in (200, 201, 202)
-                except Exception as exc:
-                    logger.debug("Calibration submission failed (non-critical): %s", exc)
-
                 self._calibration_result = {
                     'success': True,
                     'saved': True,
-                    'submitted': submitted,
+                    'submitted': False,  # calibration stays on this PC
                     'stash': result['stash'],
                     'inv': result['inv'],
                 }
@@ -3244,112 +3198,6 @@ if not _is_child_process:
         _start_hover_values()  # after everything it reads (settings, jobs, sort state) exists
     except Exception:  # never block the app over the overlay
         logger.exception("Hover values could not start")
-
-@server.route('/api/download_update')
-def download_update():
-    """Redirect to the latest release page, reusing cached version info."""
-    fallback_url = 'https://github.com/Beelzebub2/DnDTools/releases/latest'
-    try:
-        info = get_version_info()
-        release_url = (info or {}).get('release_url') or fallback_url
-        logger.info(f"Redirecting to: {release_url}")
-        return redirect(release_url)
-    except Exception as e:
-        logger.error(f"Error redirecting to update page: {e}", exc_info=True)
-        return redirect(fallback_url)
-
-def get_version_info():
-    """Get the latest version from dndtools.rrmtools.uk API with fallback to GitHub API."""
-    import requests
-    global version_cache, version_cache_timestamp
-    
-    current_time = time.time()
-    
-    # Check if we have a valid cached response
-    if version_cache and (current_time - version_cache_timestamp) < VERSION_CACHE_DURATION:
-        logger.info("Returning cached version information")
-        return version_cache
-    
-    # Cache expired or not set, fetch new data
-    try:
-        # First try dndtools.rrmtools.uk API
-        logger.info("Attempting to fetch version information from dndtools.rrmtools.uk API")
-        response = requests.get(
-            'https://dndtools.rrmtools.uk/api/github/latest-release', 
-            headers={'User-Agent': 'DnDTools-Updater'},
-            timeout=10
-        )
-        
-        # If dndtools.rrmtools.uk fails, try GitHub API directly
-        if not response.ok:
-            logger.warning(f"dndtools.rrmtools.uk API failed with status {response.status_code}, trying GitHub API directly")
-            response = requests.get(
-                'https://api.github.com/repos/Beelzebub2/DnDTools/releases/latest',
-                headers={'User-Agent': 'DnDTools-Updater'},
-                timeout=10
-            )
-            if not response.ok:
-                error_msg = f"Both APIs failed. GitHub API status: {response.status_code}"
-                logger.error(error_msg)
-                return {'version': APP_VERSION, 'error': error_msg}
-                
-        release_data = response.json()
-        
-        # Log the release data keys for debugging
-        logger.info(f"Release data received with keys: {list(release_data.keys())}")
-        
-        # Try multiple ways to extract the version
-        version = APP_VERSION
-        
-        # First try: tag_name from GitHub API
-        if 'tag_name' in release_data:
-            version = release_data['tag_name'].replace('v', '')
-            logger.info(f"Version extracted from tag_name: {version}")
-            
-        # Second try: html_url from either API (e.g., .../releases/tag/v2.0.0)
-        elif 'html_url' in release_data and '/tag/' in release_data['html_url']:
-            tag_part = release_data['html_url'].split('/tag/')[-1]
-            version = tag_part.replace('v', '')
-            logger.info(f"Version extracted from html_url: {version}")
-            
-        # Include the release URL for the UI
-        release_url = release_data.get('html_url', 'https://github.com/Beelzebub2/DnDTools/releases/latest')
-        
-        # Cache the successful result
-        result = {
-            'version': version,
-            'release_url': release_url
-        }
-        
-        version_cache = result
-        version_cache_timestamp = current_time
-        
-        return result
-        
-    except requests.exceptions.Timeout:
-        error_msg = "Connection timed out while fetching version information"
-        logger.error(error_msg)
-        return {'version': APP_VERSION, 'error': error_msg}
-        
-    except requests.exceptions.ConnectionError as e:
-        error_msg = f"Connection error: {str(e)}"
-        logger.error(error_msg)
-        return {'version': APP_VERSION, 'error': error_msg}
-        
-    except ValueError as e:
-        error_msg = f"Invalid JSON response: {str(e)}"
-        logger.error(error_msg)
-        return {'version': APP_VERSION, 'error': error_msg}
-        
-    except Exception as e:
-        error_msg = f"Unexpected error: {str(e)}"
-        logger.error(error_msg, exc_info=True)
-        return {'version': APP_VERSION, 'error': error_msg}
-
-@server.route('/api/version')
-def api_version():
-    """Get the latest version from dndtools.rrmtools.uk API with fallback to GitHub API."""
-    return jsonify(get_version_info())
 
 @server.route('/api/local_version')
 def api_local_version():
@@ -4788,13 +4636,6 @@ def background_init():
         except Exception as mig_exc:
             logger.debug("Capture migration check failed: %s", mig_exc)
 
-        # Check for updates on startup
-        try:
-            get_version_info()
-            logger.info("Version check completed on startup")
-        except Exception as e:
-            logger.error(f"Failed to check for updates on startup: {e}")
-        
         def load_data_async():
             """Load stash data once in a background thread."""
             if getattr(load_data_async, 'is_loading', False):

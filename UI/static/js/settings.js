@@ -63,7 +63,7 @@
             autoUpdateEnabled: 'Auto Update Check',
             closeToTrayEnabled: 'Close to Tray',
             developerMode: 'Developer Mode',
-            sortFeedbackSyncEnabled: 'Global Sort Learning',
+            sortFeedbackSyncEnabled: 'Sort Learning',
             overlayEnabled: 'Game Overlay',
             overlayHotkey: 'Overlay Toggle Hotkey',
             overlayOpacity: 'Overlay Opacity',
