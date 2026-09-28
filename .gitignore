@@ -9,26 +9,6 @@ UI/src/graphify-out/
 UI/capture_state.json
 UI/settings.json
 UI/assets/checksums.json
-/UI/tests/*
-!/UI/tests/conftest.py
-!/UI/tests/test_quest_sorting.py
-!/UI/tests/test_search_page_lifecycle.py
-!/UI/tests/test_stash_search.py
-!/UI/tests/test_quest_service.py
-!/UI/tests/test_update_items.py
-!/UI/tests/test_asset_updater.py
-!/UI/tests/test_update_workflow.py
-!/UI/tests/test_packet_buffers.py
-!/UI/tests/test_packet_viewer_lifecycle.py
-!/UI/tests/test_proto_coverage.py
-!/UI/tests/test_tshark_cleanup.py
-!/UI/tests/test_market_service.py
-!/UI/tests/test_market_rules.py
-!/UI/tests/test_marketplace_layout.py
-!/UI/tests/test_marketplace_state.py
-!/UI/tests/test_market_lister_plan.py
-!/UI/tests/test_marketplace_runner.py
-!/UI/tests/test_market_lister_api.py
 website/
 githelp.md
 TODO
@@ -76,9 +56,6 @@ nodejs/npm-debug.log*
 nodejs/yarn-debug.log*
 nodejs/yarn-error.log*
 nodejs/.env
-!/UI/tests/test_roll_pricing.py
-!/UI/tests/test_market_history.py
-!/UI/tests/test_market_patterns.py
 
 # Starter data is exported at release time (UI/scripts/export_starter_data.py)
 UI/assets/starter_data/

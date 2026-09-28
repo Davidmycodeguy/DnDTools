@@ -304,6 +304,15 @@ else:
             pass
     server.secret_key = _stored_secret
 
+    @server.before_request
+    def _refuse_cross_site_writes():
+        """No other web page may make this app sort, list or sell (see src/request_guard.py)."""
+        from src.request_guard import is_cross_site_write
+        if is_cross_site_write(request.method, request.headers.get('Origin'),
+                               request.headers.get('Sec-Fetch-Site'), request.host):
+            return jsonify({'success': False, 'error': 'Requests from other websites are not allowed'}), 403
+        return None
+
 
     @server.context_processor
     def inject_desktop_preferences():
@@ -3995,9 +4004,11 @@ def api_quests_progress():
 
     # POST handler
     try:
-        payload = request.get_json(force=True) or {}
+        payload = request.get_json(silent=True)  # JSON only: no plain-text posts from other pages
     except Exception:
         return jsonify({'success': False, 'error': 'Invalid JSON payload'}), 400
+    if payload is None:
+        return jsonify({'success': False, 'error': 'Send a JSON body (Content-Type: application/json)'}), 400
     if not isinstance(payload, dict):
         return jsonify({'success': False, 'error': 'Request body must be an object'}), 400
 
@@ -4052,9 +4063,11 @@ def api_quests_active_merchants():
 
     # POST
     try:
-        payload = request.get_json(force=True) or {}
+        payload = request.get_json(silent=True)  # JSON only: no plain-text posts from other pages
     except Exception:
         return jsonify({'success': False, 'error': 'Invalid JSON payload'}), 400
+    if payload is None:
+        return jsonify({'success': False, 'error': 'Send a JSON body (Content-Type: application/json)'}), 400
     if not isinstance(payload, dict):
         return jsonify({'success': False, 'error': 'Request body must be an object'}), 400
 
@@ -4315,9 +4328,11 @@ def api_transfer_execute(character_id):
 @server.route('/api/sort-feedback', methods=['POST'])
 def api_sort_feedback():
     try:
-        payload = request.get_json(force=True) or {}
+        payload = request.get_json(silent=True)  # JSON only: no plain-text posts from other pages
     except Exception:
         return jsonify({'success': False, 'error': 'Invalid JSON payload'}), 400
+    if payload is None:
+        return jsonify({'success': False, 'error': 'Send a JSON body (Content-Type: application/json)'}), 400
     if not isinstance(payload, dict):
         return jsonify({'success': False, 'error': 'Request body must be an object'}), 400
 
@@ -4839,7 +4854,7 @@ def background_init():
         try:
             state = api.capture_controller.state()
 
-            if state.get("desired") and not state.get("running"):
+            if state.get("desiredRunning") and not state.get("running"):
                 logger.info("Restoring desired capture state from previous session")
                 started, updated_state = api.capture_controller.start()
                 if started:
@@ -4982,7 +4997,9 @@ def main():
     atexit.register(_atexit_cleanup)
 
     # Start the webview (blocks until all windows are destroyed)
-    webview.start(on_loaded, debug=False)
+    # Not private: the UI keeps its local storage (archived quests, dismissed notices) between launches.
+    webview.start(on_loaded, debug=False, private_mode=False,
+                  storage_path=os.path.join(os.path.dirname(get_data_dir()), 'webview'))
 
     # webview.start() has returned — the UI window is gone.
     # Ensure the application actually exits instead of lingering as a ghost

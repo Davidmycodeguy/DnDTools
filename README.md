@@ -64,7 +64,7 @@ pip install -r UI/requirements.txt
 2. Navigate to the UI folder and run the application::
 ```bash
 cd UI
-python app.py
+python main.py
 ```
 3. Make sure packet capture is enabled.
 4. From the character selection screen, select the character you want to capture.

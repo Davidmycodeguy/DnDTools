@@ -1,4 +1,5 @@
 import os
+import re
 import sys
 import shutil
 import logging
@@ -109,8 +110,8 @@ def migrate_data_files():
             if os.path.isdir(src):
                 continue
                 
-            # Only process .json files
-            if not filename.lower().endswith('.json'):
+            # Only character files ("<character id>.json"); market data and models stay here
+            if not re.fullmatch(r'\d+\.json', filename.lower()):
                 continue
                 
             # Skip files we just moved or are about to move (though they should be gone if moved)
