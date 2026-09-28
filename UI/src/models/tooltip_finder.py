@@ -15,9 +15,15 @@ MAX_RULE_PX = 1300       # wider runs are screen borders or UI frames, not toolt
 RULE_MIN_SATURATION = 50  # max - min channel: rarity colors are vivid, text and frames are not
 RULE_MIN_BRIGHTNESS = 100
 # Common tooltips underline the title in grey-white instead: accept bright, colourless runs too
-# (the fill check keeps white text out). Poor tooltips' rule is too dim to tell from UI lines.
+# (the fill check keeps white text out).
 NEUTRAL_MIN_BRIGHTNESS = 120
 NEUTRAL_MAX_SATURATION = 40
+# Poor tooltips underline it in dim grey (~80), as dim as plenty of UI lines, so a dim rule must also
+# have the title rule's shape: two thin lines, the second starting ~5 px below the first (at 4K).
+DIM_MIN_BRIGHTNESS = 60
+DIM_MAX_SATURATION = 20
+DOUBLE_GAP_PX = (4, 6)
+DOUBLE_MIN_FILL = 0.6    # the second line lit along this much of the first
 RULE_GROUP_PX = 14       # the two rules under a title are ~6 px apart
 RULE_MAX_GAP_PX = 12     # a rule fades toward its ends and breaks into pieces up to ~10 px apart
 RULE_MIN_FILL = 0.8      # a rule row is ~96% lit; a row through bridged text is under 50%
@@ -67,6 +73,18 @@ def _rule_masks(frame):
     return vivid, neutral
 
 
+def _dim_mask(frame):
+    """Dim, colourless pixels: a Poor rule's grey, below the Common rule's brightness."""
+    high, low = frame.max(axis=2), frame.min(axis=2)
+    return (high - low < DIM_MAX_SATURATION) & (high >= DIM_MIN_BRIGHTNESS) & (high < NEUTRAL_MIN_BRIGHTNESS)
+
+
+def _gaps(scale):
+    """Rows below a rule's first line where its second line starts."""
+    low, high = (max(2, round(g * scale)) for g in DOUBLE_GAP_PX)
+    return range(low, max(low, high) + 1)
+
+
 def _runs(row, min_length, max_gap, min_fill=RULE_MIN_FILL):
     """[(start, end)] of runs of True at least `min_length` long, bridging gaps up to `max_gap`,
     that stay at least `min_fill` lit (text bridged across letter gaps is mostly gaps)."""
@@ -99,6 +117,13 @@ def _rules(mask, min_length, max_gap, max_length):
             else:
                 rule[1], rule[2], rule[3] = min(rule[1], left), max(rule[2], right), int(y)
     return [(top, left, right) for top, left, right, _ in rules]
+
+
+def _double(dim, rule, scale):
+    """Whether a dim rule (top, left, right) has a second line just below it, as title rules do."""
+    top, left, right = rule
+    return any(top + gap < dim.shape[0] and dim[top + gap, left:right].mean() >= DOUBLE_MIN_FILL
+               for gap in _gaps(scale))
 
 
 def _distance(point, left, top, right, bottom):
@@ -136,7 +161,23 @@ def rule_rows(strip, scale=1.0):
             clusters[-1][1] = y
         else:
             clusters.append([y, y])
-    return [top for top, bottom in clusters if bottom - top < span]
+    rows = [top for top, bottom in clusters if bottom - top < span]
+    return sorted(rows + [y for y in _double_dim_rows(strip, scale) if all(abs(y - r) > group for r in rows)])
+
+
+def _double_dim_rows(strip, scale):
+    """Rows where a Poor rule starts across the whole strip: a dim line, dark rows, a second dim line."""
+    lit = _dim_mask(strip).mean(axis=1) >= PROBE_MIN_LIT
+    gaps, after = _gaps(scale), max(2, round(3 * scale))
+    rows = []
+    for y in np.flatnonzero(lit).tolist():
+        if y == 0 or lit[y - 1] or y + gaps[-1] + after >= len(lit):
+            continue
+        for gap in gaps:
+            if lit[y + gap] and not lit[y + 1:y + gap].all() and not lit[y + gap + after]:
+                rows.append(y)
+                break
+    return rows
 
 
 def probe(grab, cursor, scale, screen):
@@ -208,7 +249,7 @@ def rule_still_there(pixels, color):
         return False
     vivid, neutral = _rule_masks(pixels)
     same = np.abs(pixels.astype(np.int16) - np.asarray(color, dtype=np.int16)).max(axis=2) <= RULE_COLOR_TOLERANCE
-    return bool(((vivid | neutral) & same).any(axis=0).mean() >= RULE_MIN_VISIBLE)
+    return bool(((vivid | neutral | _dim_mask(pixels)) & same).any(axis=0).mean() >= RULE_MIN_VISIBLE)
 
 
 def find_tooltip(frame, cursor, scale=1.0):
@@ -226,10 +267,10 @@ def find_tooltips(frame, cursor, scale=1.0, limit=3):
     vivid, neutral = _rule_masks(window)
     step = COLUMN_STEP
     widest = round(MAX_RULE_PX * scale / step)
-    candidates = (_rules(vivid, max(10, round(MIN_RULE_PX * scale / step)),
-                         max(1, round(RULE_MAX_GAP_PX * scale / step)), widest)
-                  + _rules(neutral, max(10, round(MIN_RULE_PX * scale / step)),
-                           max(1, round(RULE_MAX_GAP_PX * scale / step)), widest))
+    shortest, gap = max(10, round(MIN_RULE_PX * scale / step)), max(1, round(RULE_MAX_GAP_PX * scale / step))
+    dim = _dim_mask(window)
+    candidates = (_rules(vivid, shortest, gap, widest) + _rules(neutral, shortest, gap, widest)
+                  + [rule for rule in _rules(dim, shortest, gap, widest) if _double(dim, rule, scale)])
     title = round(TITLE_HEIGHT_PX * scale)
     local = ((cx - x0) / step, cy - y0)
     body = round(TYPICAL_BODY_PX * scale)
@@ -237,6 +278,8 @@ def find_tooltips(frame, cursor, scale=1.0, limit=3):
     boxes = []
     for y, left, right in nearest:
         lit = vivid[y, left:right] | neutral[y, left:right]
+        if not lit.any():
+            lit = dim[y, left:right]
         color = tuple(int(v) for v in np.median(window[y, left:right][lit], axis=0)) if lit.any() else (0, 0, 0)
         boxes.append(TooltipBox(left=left * step + x0, right=right * step + x0, rule_y=y + y0, color=color))
     return boxes

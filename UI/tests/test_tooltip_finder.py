@@ -171,3 +171,36 @@ def test_a_tooltip_opening_left_of_the_cursor_is_found_too():
 def test_no_rule_beside_the_cursor_means_nothing_found():
     screen = FakeScreen(_frame(3840, 2160))
     assert find_near_cursor(screen, cursor=(2000, 1300), scale=1.0, screen=screen.size) == []
+
+
+POOR = (82, 82, 82)
+
+
+def _poor_tooltip(frame, left, rule_y, width):
+    """A Poor tooltip as drawn at 4K: two dim grey lines, 2 px thick, the second 5 px below the first."""
+    frame[rule_y - 105:rule_y + 600, left:left + width] = (20, 18, 18)
+    for y in (rule_y, rule_y + 5):
+        frame[y:y + 2, left + 40:left + width - 40] = POOR
+    return frame
+
+
+def test_a_poor_tooltips_dim_double_rule_is_found():
+    frame = _poor_tooltip(_frame(3840, 2160), left=2030, rule_y=700, width=760)
+    screen = FakeScreen(frame)
+    boxes = find_near_cursor(screen, cursor=(2000, 1300), scale=1.0, screen=screen.size)
+    assert boxes and boxes[0].rule_y == 700 and boxes[0].color == POOR
+
+
+def test_a_single_dim_ui_line_is_not_a_rule():
+    frame = _frame(3840, 2160)
+    frame[700:702, 2070:2750] = POOR
+    screen = FakeScreen(frame)
+    assert find_near_cursor(screen, cursor=(2000, 1300), scale=1.0, screen=screen.size) == []
+
+
+def test_rule_rows_see_a_dim_double_line_but_not_a_single_one():
+    strip = np.full((600, 64, 3), 8, dtype=np.uint8)
+    strip[200:202] = POOR
+    strip[205:207] = POOR
+    strip[400:402] = POOR
+    assert rule_rows(strip) == [200]

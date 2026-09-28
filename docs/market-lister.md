@@ -151,8 +151,9 @@ The card is click-through and never takes focus, so the game keeps every input; 
 the cursor moves or the game's tooltip closes, and pauses while the lister or the sorter is driving
 the mouse. In-game overlays (Discord, NVIDIA) holding focus don't pause it.
 
-Limits: Poor items are skipped (their title rule is too faint to find reliably), and items with no
-saved market data show only the merchant price until the market has been crawled for their rarity.
+Every rarity is read, Poor included (its title rule is dim grey, so it is told from UI lines by its
+double-line shape). Items with no saved market data show the merchant price until the market has
+been crawled for their rarity.
 
 ## Market data (local history)
 
