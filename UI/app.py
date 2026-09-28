@@ -3083,13 +3083,28 @@ def _hover_item(item_id):
                      slots=int(meta.get("inventory_width") or 1) * int(meta.get("inventory_height") or 1))
 
 
+def _hover_listing_price(tip, estimate, vendor_price):
+    """What the lister would list this copy at: roll pricing anchored on live asks, as it lists."""
+    from src.models.roll_pricing import price_from_market
+    live = market_history.active_rows(tip.item_id, WORTH_LIVE_MAX_AGE_S) if market_history else []
+    if estimate is None or not live:
+        return None
+    rules = ListerRules.from_dict(settings_manager.get(LISTER_RULES_KEY) or {})
+    suggestion = price_from_market(tip.item_id, tip.base, tip.rolls, vendor_price, [], live, rules,
+                                   model_value=estimate.value, model_floor=estimate.floor)
+    return suggestion.price if suggestion.ok else None
+
+
 def _hover_card(tip):
+    from dataclasses import replace
     from src.models.hover_card import build_card
     model = _worth_model()
     estimate = model.predict(tip.item_id, tip.rolls) if model is not None else None
     if estimate is not None and estimate.confidence == "unknown":
         estimate = None
-    return build_card(tip, estimate, _hover_market(tip.item_id), _hover_item(tip.item_id))
+    item = _hover_item(tip.item_id)
+    market = replace(_hover_market(tip.item_id), listing_price=_hover_listing_price(tip, estimate, item.merchant))
+    return build_card(tip, estimate, market, item)
 
 
 def _game_in_front():

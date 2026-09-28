@@ -139,3 +139,10 @@ def test_a_fast_sale_that_rounds_to_nothing_still_makes_a_card():
     assert render_card(card, 1080).height > 100
     card = build_card(TIP, _estimate(value=0.4, floor=0.3), MarketFacts(), ItemFacts(merchant=0))
     assert render_card(card, 1080).height > 100
+
+
+def test_the_fast_sale_is_what_the_lister_would_list_at_when_known():
+    card = build_card(TIP, _estimate(), MarketFacts(asks=(280, 330), listing_price=275), SHOP)
+    assert (card.fast_sale, card.net) == (275, 260)  # fee: 5% of 275 rounded up = 14g
+    card = build_card(TIP, _estimate(), MarketFacts(asks=(280, 330)), SHOP)
+    assert card.fast_sale == 310                     # no listing price: the model's lowest reasonable price

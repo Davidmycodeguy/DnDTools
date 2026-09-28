@@ -64,6 +64,7 @@ class MarketFacts:
     trend: tuple = ()       # daily median unit prices, oldest first
     seen_ago_s: float | None = None  # how old the asks are when none are live
     sales_tracked: bool = False      # the market was read twice lately, so sales could be seen
+    listing_price: int | None = None  # what the lister would list it at (roll pricing on live asks)
 
 
 @dataclass(frozen=True)
@@ -171,7 +172,12 @@ def build_card(tip, estimate, market=MarketFacts(), item=ItemFacts()):
                               quality is not None and quality >= MAX_QUALITY))
     known = [r.quality for r in rolls if r.quality is not None]
     value = round(estimate.value) if estimate else None
-    fast_sale = round(min(estimate.floor, estimate.value)) if estimate else None
+    if estimate is None:
+        fast_sale = None
+    elif market.listing_price is not None:  # the price the lister itself would use
+        fast_sale = int(market.listing_price)
+    else:
+        fast_sale = round(min(estimate.floor, estimate.value))
     net = fast_sale - listing_fee(fast_sale) if fast_sale is not None else None
     merchant = int(item.merchant or 0)
     if estimate is None:

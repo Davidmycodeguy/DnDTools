@@ -127,7 +127,9 @@ Rest the cursor on an item in the game — stash, Marketplace, merchants or a du
 card appears beside the game's tooltip. Toggle it under **Item value model** on the Market page.
 
 - **Value** for the item's exact rolls (the Item Worth model) with a confidence meter, a **fast
-  sale** price (the lowest reasonable ask, which sells quickly) and what that nets after the fee.
+  sale** price and what that nets after the fee. The fast sale is the price the lister itself would
+  list this copy at (anchored on live listings with comparable rolls), or the model's lowest
+  reasonable price when nothing comparable is listed.
 - **Verdict**: *LIST IT* when a fast sale nets more than a merchant pays, *MERCHANT* when it
   doesn't, *NO DATA* when the market hasn't been crawled for the item yet.
 - **Price ladder**: where other asks cluster (a density curve on a log price scale), the model's
@@ -138,11 +140,16 @@ card appears beside the game's tooltip. Toggle it under **Item value model** on 
 - **Rolls**: each random roll with a quality meter for its range (*MAX* at the top) and the gold it
   adds or costs against an average roll, plus stat pairs that notably change the price.
 
-How it works: when the cursor settles, DnDTools captures the screen around it and finds the
-tooltip by the coloured rule under its title. It reads the tooltip with **Windows' built-in text
-recognition** (nothing to install, nothing leaves your PC), matches the title and rarity to the
-item list, and turns the stat lines into rolls. The card is click-through and never takes focus,
-so the game keeps every input; it pauses while the lister or the sorter is driving the mouse.
+How it works: the game opens a tooltip right beside the cursor ~0.2 s after it comes to rest, so
+from the moment the cursor settles DnDTools looks every 20 ms at two thin strips beside it (one
+screen copy, a few milliseconds) for the coloured rule under a tooltip's title. When one appears it
+measures the rule, copies just the tooltip and reads it with **Windows' built-in text recognition**
+(nothing to install, nothing leaves your PC), matches the title and rarity to the item list and turns
+the stat lines into rolls. The card shows about 0.1 s after the game's own tooltip. Fixed UI lines
+that look like rules are remembered once checked, so busy screens like the Marketplace stay fast.
+The card is click-through and never takes focus, so the game keeps every input; it hides as soon as
+the cursor moves or the game's tooltip closes, and pauses while the lister or the sorter is driving
+the mouse. In-game overlays (Discord, NVIDIA) holding focus don't pause it.
 
 Limits: Poor items are skipped (their title rule is too faint to find reliably), and items with no
 saved market data show only the merchant price until the market has been crawled for their rarity.
