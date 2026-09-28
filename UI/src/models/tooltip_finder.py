@@ -5,6 +5,7 @@ the tooltip's width. Nothing else near an item is that long, thin and saturated,
 run nearest the cursor marks the tooltip's width and where its title ends. Pixel sizes are measured
 at 3840x2160 and scaled by `scale` (screen height / 2160).
 """
+import hashlib
 from dataclasses import dataclass
 
 import numpy as np
@@ -27,6 +28,19 @@ SEARCH_Y_PX = 1300
 COLUMN_STEP = 2          # rules are long and horizontal: every other column is plenty
 MAX_BODY_PX = 1500       # tallest tooltip body below the rules
 TYPICAL_BODY_PX = 800    # for ranking: the hovered item sits beside the tooltip's body, not its rule
+# Probing: the game opens a tooltip right beside the cursor (~20-30 px away), 600+ px wide, going
+# up or down to fit. A narrow strip each side of the cursor therefore crosses the rule of any
+# tooltip there, and grabbing two strips is a tiny fraction of grabbing the whole search area.
+PROBE_OFFSET_PX = 200    # past the cursor sprite and the rule's faded end, well inside its run
+PROBE_WIDTH_PX = 64
+PROBE_UP_PX = 1800       # a tooltip opening upward ends by the cursor: its rule can be this far up
+PROBE_DOWN_PX = 300      # one opening downward starts by the cursor: its rule is a title bar below
+PROBE_MIN_LIT = 0.9      # a rule lights (nearly) the whole strip; text doesn't
+RULE_MAX_SPAN_PX = 16    # a rule's two thin lines span ~8 rows; item art lit this wide is a blob
+MAX_PROBE_ROWS = 8       # candidate rules measured per look, nearest the cursor first
+BAND_PX = 10             # rows either side of a candidate grabbed to measure its whole rule
+RULE_MIN_VISIBLE = 0.25  # a tooltip is still up while this much of its rule shows ...
+RULE_COLOR_TOLERANCE = 48  # ... in its own colour (its ends fade)
 
 
 @dataclass(frozen=True)
@@ -92,6 +106,109 @@ def _distance(point, left, top, right, bottom):
     dx = max(left - x, 0, x - right)
     dy = max(top - y, 0, y - bottom)
     return dx * dx + dy * dy
+
+
+def probe_strips(cursor, scale, screen):
+    """Screen regions (left, top, right, bottom) to watch for a title rule: a narrow strip each
+    side of the cursor, clipped to the screen (a strip mostly off screen is dropped)."""
+    cx, cy = cursor
+    width, height = screen
+    offset, strip = round(PROBE_OFFSET_PX * scale), max(8, round(PROBE_WIDTH_PX * scale))
+    top, bottom = max(0, cy - round(PROBE_UP_PX * scale)), min(height, cy + round(PROBE_DOWN_PX * scale))
+    regions = []
+    for start in (cx + offset, cx - offset - strip):
+        left, right = max(0, start), min(width, start + strip)
+        if right - left >= strip // 2 and bottom > top:
+            regions.append((left, top, right, bottom))
+    return regions
+
+
+def rule_rows(strip, scale=1.0):
+    """Rows of `strip` crossed end to end by a title rule: the top row of each thin lit cluster."""
+    if strip.size == 0:
+        return []
+    vivid, neutral = _rule_masks(strip)
+    lit = np.flatnonzero((vivid | neutral).mean(axis=1) >= PROBE_MIN_LIT).tolist()
+    group, span = max(2, round(RULE_GROUP_PX * scale)), max(4, round(RULE_MAX_SPAN_PX * scale))
+    clusters = []
+    for y in lit:
+        if clusters and y - clusters[-1][1] <= group:
+            clusters[-1][1] = y
+        else:
+            clusters.append([y, y])
+    return [top for top, bottom in clusters if bottom - top < span]
+
+
+def probe(grab, cursor, scale, screen):
+    """[(screen row, signature)] of rule candidates crossing the probe strips, nearest the cursor
+    first. The signature fingerprints what the strip shows around that row, so a caller can skip a
+    row it already found to be no tooltip (a fixed UI line) until those pixels change."""
+    group = max(2, round(RULE_GROUP_PX * scale))
+    below = max(8, round(2 * RULE_MAX_SPAN_PX * scale))
+    strips = probe_strips(cursor, scale, screen)
+    if not strips:
+        return []
+    # One grab for both strips: a screen copy waits for the next composited frame (~15 ms at 60 Hz)
+    # whatever its size, so the number of grabs is what costs, not their width.
+    box = (min(s[0] for s in strips), strips[0][1], max(s[2] for s in strips), strips[0][3])
+    both = grab(box)
+    rows = []
+    for index, region in enumerate(strips):
+        pixels = both[:, region[0] - box[0]:region[2] - box[0]]
+        for row in rule_rows(pixels, scale):
+            if all(abs(region[1] + row - seen) > group for seen, _ in rows):
+                patch = np.ascontiguousarray(pixels[max(0, row - 2):row + below])
+                rows.append((region[1] + row, (index, region[1] + row, hashlib.sha1(patch.tobytes()).digest())))
+    return sorted(rows, key=lambda r: abs(r[0] - cursor[1]))[:MAX_PROBE_ROWS]
+
+
+def measure(grab, row, cursor, scale, screen, limit=3):
+    """TooltipBoxes (screen pixels) of the rules on `row`, from a thin band grabbed across the
+    search width: their full extent and colour."""
+    cx, cy = cursor
+    width, height = screen
+    reach, band = round(SEARCH_X_PX * scale), max(4, round(BAND_PX * scale))
+    region = (max(0, cx - reach), max(0, row - band), min(width, cx + reach), min(height, row + band + 1))
+    pixels = grab(region)
+    if pixels.size == 0:
+        return []
+    local = (cx - region[0], min(max(cy - region[1], 0), pixels.shape[0] - 1))  # rules far above still count
+    return [TooltipBox(b.left + region[0], b.right + region[0], b.rule_y + region[1], b.color)
+            for b in find_tooltips(pixels, local, scale, limit=limit)]
+
+
+def nearness(cursor, scale):
+    """Sort key: how far a box's tooltip is from the cursor (its body beside the item, not just its rule)."""
+    title, body = round(TITLE_HEIGHT_PX * scale), round(TYPICAL_BODY_PX * scale)
+    return lambda b: _distance(cursor, b.left, b.rule_y - title, b.right, b.rule_y + body)
+
+
+def rank(boxes, cursor, scale):
+    """Boxes nearest the cursor first."""
+    return sorted(boxes, key=nearness(cursor, scale))
+
+
+def find_near_cursor(grab, cursor, scale, screen, limit=3):
+    """Up to `limit` TooltipBoxes (screen pixels) by the cursor, nearest first. Grabs only the
+    probe strips and, for each rule they cross, a thin band to measure it: a few % of the screen.
+    `grab(region)` returns that region's pixels as an RGB array."""
+    group = max(2, round(RULE_GROUP_PX * scale))
+    boxes = []
+    for row, _ in probe(grab, cursor, scale, screen):
+        for box in measure(grab, row, cursor, scale, screen, limit):
+            if not any(abs(box.rule_y - b.rule_y) <= group and box.left < b.right and box.right > b.left for b in boxes):
+                boxes.append(box)
+    return rank(boxes, cursor, scale)[:limit]
+
+
+def rule_still_there(pixels, color):
+    """Whether a band grabbed over a tooltip's rule (exactly its extent) still shows it: enough of
+    its columns lit in the rule's colour. Another overlay may cover part of it, so not all of it."""
+    if pixels.size == 0:
+        return False
+    vivid, neutral = _rule_masks(pixels)
+    same = np.abs(pixels.astype(np.int16) - np.asarray(color, dtype=np.int16)).max(axis=2) <= RULE_COLOR_TOLERANCE
+    return bool(((vivid | neutral) & same).any(axis=0).mean() >= RULE_MIN_VISIBLE)
 
 
 def find_tooltip(frame, cursor, scale=1.0):

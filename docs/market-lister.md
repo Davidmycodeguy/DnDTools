@@ -124,19 +124,28 @@ something that wasn't picked, the run stops and names it. Buy it back from the m
 ## In-game item values (hover)
 
 Rest the cursor on an item in the game — stash, Marketplace, merchants or a dungeon chest — and a
-small panel appears beside the game's tooltip with what the item is worth for its exact rolls
-(the Item Worth model), the lowest current ask from your saved market data, and what a merchant
-pays. Toggle it under **Item value model** on the Market page.
+card appears beside the game's tooltip. Toggle it under **Item value model** on the Market page.
+
+- **Value** for the item's exact rolls (the Item Worth model) with a confidence meter, a **fast
+  sale** price (the lowest reasonable ask, which sells quickly) and what that nets after the fee.
+- **Verdict**: *LIST IT* when a fast sale nets more than a merchant pays, *MERCHANT* when it
+  doesn't, *NO DATA* when the market hasn't been crawled for the item yet.
+- **Price ladder**: where other asks cluster (a density curve on a log price scale), the model's
+  typical range for these rolls, the lowest ask, and how many asks the fast sale undercuts.
+- **Market**: listings (live, or the past week's with their age), sales seen this week and, once
+  the item's market has been read twice, how fast it sells; a price trend over 14 days when there
+  is one; what a merchant pays and the gold per inventory slot.
+- **Rolls**: each random roll with a quality meter for its range (*MAX* at the top) and the gold it
+  adds or costs against an average roll, plus stat pairs that notably change the price.
 
 How it works: when the cursor settles, DnDTools captures the screen around it and finds the
 tooltip by the coloured rule under its title. It reads the tooltip with **Windows' built-in text
 recognition** (nothing to install, nothing leaves your PC), matches the title and rarity to the
-item list, and turns the stat lines into rolls. The panel is click-through and never takes focus,
+item list, and turns the stat lines into rolls. The card is click-through and never takes focus,
 so the game keeps every input; it pauses while the lister or the sorter is driving the mouse.
 
-Limits: Poor items are skipped (their rule is too faint to find, and they only sell to merchants),
-and items with no saved market data show only the merchant price until the market has been
-crawled for their rarity.
+Limits: Poor items are skipped (their title rule is too faint to find reliably), and items with no
+saved market data show only the merchant price until the market has been crawled for their rarity.
 
 ## Market data (local history)
 

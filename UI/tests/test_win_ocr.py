@@ -65,7 +65,17 @@ def test_read_sends_a_temp_image_path_and_returns_lines(tmp_path):
     lines = ocr.read(Image.new("RGB", (40, 20)))
     assert lines == [OcrLine("Gem Ring", 1, 2, 3, 4)]
     path = process.written[0].strip()
-    assert path.startswith(str(tmp_path)) and path.endswith(".png")
+    assert path.startswith(str(tmp_path)) and path.endswith(".bmp")  # uncompressed: saves in <1 ms
+
+
+def test_start_boots_the_worker_and_warms_up_recognition(tmp_path):
+    launched = []
+    answers = ['{"ok":true,"lines":[]}', '{"ok":true,"lines":[{"text":"Gem Ring","x":1,"y":2,"w":3,"h":4}]}']
+    ocr = WindowsOcr(launch=lambda: launched.append(FakeProcess(answers)) or launched[-1], temp_dir=str(tmp_path))
+    ocr.start()
+    ocr.start()  # already running: nothing more to do
+    assert len(launched) == 1 and len(launched[0].written) == 1  # one throwaway read: the first is slow
+    assert ocr.read(Image.new("RGB", (4, 4))) == [OcrLine("Gem Ring", 1, 2, 3, 4)] and len(launched) == 1
 
 
 def test_worker_that_never_answers_times_out_and_is_restarted(tmp_path):

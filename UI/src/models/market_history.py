@@ -6,8 +6,10 @@ listings that vanished before expiring (most likely sold) and track our own sale
 """
 import json
 import sqlite3
+import statistics
 import threading
 import time
+from collections import defaultdict
 from dataclasses import dataclass
 
 from src.models.roll_pricing import MarketRow, stat_name
@@ -55,6 +57,11 @@ CREATE TABLE IF NOT EXISTS scans (
     finished_at REAL NOT NULL,
     max_price INTEGER NOT NULL,
     complete INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS crawl_passes (
+    rarity INTEGER NOT NULL,
+    started_at REAL NOT NULL,
+    finished_at REAL NOT NULL
 );
 CREATE TABLE IF NOT EXISTS merchant_prices (
     item_id TEXT PRIMARY KEY,
@@ -180,6 +187,8 @@ class MarketHistory:
                 """UPDATE listings SET vanished_at = ?
                    WHERE rarity = ? AND vanished_at IS NULL AND last_seen < ? AND expires_at > ?""",
                 (now, int(rarity), started_at, now + VANISH_MARGIN_S))
+            self._db.execute("INSERT INTO crawl_passes (rarity, started_at, finished_at) VALUES (?, ?, ?)",
+                             (int(rarity), started_at, now))
             self._db.commit()
             return cursor.rowcount
 
@@ -215,6 +224,23 @@ class MarketHistory:
                 (item_id, now - max_age_s, now)).fetchall()
         return [_to_market_row(r) for r in records]
 
+    def recent_asks(self, item_id: str, live_s: float, fallback_s: float) -> tuple:
+        """(unit prices, age) of the item's open listings seen within `fallback_s`. Quick price
+        checks read only the cheapest pages, so listings from an earlier full read that were not
+        seen to sell still count. Age is None when the market was read within `live_s`, else how
+        long ago the newest listing was seen."""
+        now = self._clock()
+        with self._lock:
+            records = self._db.execute(
+                """SELECT price, item_count, last_seen FROM listings
+                   WHERE item_id = ? AND vanished_at IS NULL AND last_seen >= ? AND expires_at > ?
+                     AND listing_id NOT IN (SELECT listing_id FROM my_listings)""",
+                (item_id, now - fallback_s, now)).fetchall()
+        asks = tuple(price / max(count or 1, 1) for price, count, _ in records)
+        newest = max((seen for _, _, seen in records), default=None)
+        age = None if newest is None or newest >= now - live_s else now - newest
+        return asks, age
+
     def vanished_rows(self, item_id: str) -> list:
         with self._lock:
             records = self._db.execute(
@@ -222,6 +248,51 @@ class MarketHistory:
                 "WHERE item_id = ? AND vanished_at IS NOT NULL",
                 (item_id,)).fetchall()
         return [_to_market_row(r) for r in records]
+
+    def sold_since(self, item_id: str, since: float) -> int:
+        """Listings of `item_id` that vanished before expiring (most likely sold) at or after `since`."""
+        with self._lock:
+            return self._db.execute(
+                "SELECT COUNT(*) FROM listings WHERE item_id = ? AND last_seen >= ? AND vanished_at >= ?",
+                (item_id, since - LISTING_DAYS * DAY_S, since)).fetchone()[0]
+
+    def sales_tracked(self, item_id: str, since: float) -> bool:
+        """Whether sales of `item_id` since `since` could have been seen: a sale was, or since then a
+        scan of the item or a full crawl pass of its rarity ran after its listings had been seen
+        (those are what mark vanished listings; merely seeing listings again doesn't)."""
+        with self._lock:
+            first = self._db.execute(
+                "SELECT MIN(first_seen) FROM listings WHERE item_id = ? AND last_seen >= ?",
+                (item_id, since - LISTING_DAYS * DAY_S)).fetchone()[0]
+            if first is None:
+                return False
+            found = self._db.execute(
+                """SELECT 1 WHERE EXISTS (SELECT 1 FROM listings WHERE item_id = ? AND last_seen >= ? AND vanished_at >= ?)
+                   OR EXISTS (SELECT 1 FROM scans WHERE item_id = ? AND finished_at >= ? AND started_at > ?)
+                   OR EXISTS (SELECT 1 FROM crawl_passes WHERE rarity = ? AND finished_at >= ? AND started_at > ?)""",
+                (item_id, since - LISTING_DAYS * DAY_S, since, item_id, since, first,
+                 rarity_of(item_id), since, first)).fetchone()
+        return found is not None
+
+    def daily_medians(self, item_id: str, days: int, min_listings: int = 1) -> list:
+        """[(day start, median unit price, listings)] for each of the last `days` days, oldest first:
+        the median ask among listings open that day (first seen by its end, last seen on or after its
+        start). A first crawl holds the whole standing market, so counting only new listings per day
+        would read as a price drop; days with fewer than `min_listings` listings are left out."""
+        now = self._clock()
+        first_day = int((now - days * DAY_S) // DAY_S) * DAY_S
+        with self._lock:
+            records = self._db.execute(
+                "SELECT price, item_count, first_seen, last_seen FROM listings WHERE item_id = ? AND last_seen >= ?",
+                (item_id, now - days * DAY_S)).fetchall()
+        per_day = defaultdict(list)
+        for price, count, first_seen, last_seen in records:
+            day = max(int(first_seen // DAY_S) * DAY_S, first_day)
+            while day <= last_seen:
+                per_day[day].append(price / max(count or 1, 1))
+                day += DAY_S
+        return [(float(day), float(statistics.median(prices)), len(prices))
+                for day, prices in sorted(per_day.items()) if len(prices) >= min_listings]
 
     def count_seen_before(self, listing_ids, before: float) -> int:
         """How many of these listings were already recorded before `before` (incremental crawls)."""

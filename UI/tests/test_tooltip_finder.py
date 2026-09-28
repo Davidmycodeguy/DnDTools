@@ -1,6 +1,7 @@
 import numpy as np
 
-from src.models.tooltip_finder import TooltipBox, find_tooltip, find_tooltips
+from src.models.tooltip_finder import (TooltipBox, find_near_cursor, find_tooltip, find_tooltips, probe_strips,
+                                      rule_rows)
 
 EPIC = (150, 60, 195)
 LEGENDARY = (230, 120, 20)
@@ -115,3 +116,58 @@ def test_a_tooltip_opening_upward_beats_a_nearer_ui_line():
     frame[1100:1101, 700:1000] = (174, 173, 173)  # a fixed grey UI line, closer to the cursor's row
     boxes = find_tooltips(frame, cursor=(1560, 1150), scale=1.0)
     assert boxes[0].rule_y == 300
+
+
+class FakeScreen:
+    """Hands out regions of a frame like a screen capture, remembering what was grabbed."""
+
+    def __init__(self, frame):
+        self.frame, self.grabs = frame, []
+
+    def __call__(self, region):
+        left, top, right, bottom = region
+        self.grabs.append(region)
+        return self.frame[top:bottom, left:right]
+
+    @property
+    def size(self):
+        return self.frame.shape[1], self.frame.shape[0]
+
+
+def test_probe_strips_sit_beside_the_cursor_and_stay_on_screen():
+    strips = probe_strips((2000, 1000), 1.0, (3840, 2160))
+    assert len(strips) == 2
+    right, left = sorted(strips, key=lambda s: -s[0])
+    assert right[0] > 2000 and left[2] < 2000                  # one each side of the cursor
+    assert all(s[1] >= 0 and s[3] <= 2160 for s in strips)
+    assert probe_strips((5, 1000), 1.0, (3840, 2160))[0][0] > 5   # no strip off the left edge
+
+
+def test_rule_rows_are_where_a_rule_crosses_the_whole_strip():
+    strip = np.full((600, 64, 3), 8, dtype=np.uint8)
+    strip[200:202] = EPIC
+    strip[206:208] = EPIC                                        # the second line of the same rule
+    strip[400:402, :20] = EPIC                                   # a short stroke, not a rule
+    assert rule_rows(strip) == [200]
+
+
+def test_finds_the_tooltip_by_the_cursor_grabbing_only_strips_and_bands():
+    frame = _tooltip(_frame(3840, 2160), left=2030, rule_y=700, width=760)
+    screen = FakeScreen(frame)
+    boxes = find_near_cursor(screen, cursor=(2000, 1300), scale=1.0, screen=screen.size)
+    assert [(b.left, b.right, b.rule_y, b.color) for b in boxes[:1]] == [(2100, 2720, 700, EPIC)]
+    assert len(screen.grabs) == 2                                # both strips in one grab, then the rule's band
+    grabbed = sum((r[2] - r[0]) * (r[3] - r[1]) for r in screen.grabs)
+    assert grabbed < 0.15 * 3840 * 2160                          # a small part of the screen
+
+
+def test_a_tooltip_opening_left_of_the_cursor_is_found_too():
+    frame = _tooltip(_frame(3840, 2160), left=2400, rule_y=900, width=760)
+    screen = FakeScreen(frame)
+    boxes = find_near_cursor(screen, cursor=(3190, 1000), scale=1.0, screen=screen.size)
+    assert boxes and boxes[0].rule_y == 900 and boxes[0].right == 3090
+
+
+def test_no_rule_beside_the_cursor_means_nothing_found():
+    screen = FakeScreen(_frame(3840, 2160))
+    assert find_near_cursor(screen, cursor=(2000, 1300), scale=1.0, screen=screen.size) == []

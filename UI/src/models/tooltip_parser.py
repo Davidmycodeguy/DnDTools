@@ -152,6 +152,11 @@ def _rarity(row):
     return RARITY_KEYS.get(_norm(match["word"])[:4]) if match and match["word"] else None
 
 
+def looks_like_tooltip(lines):
+    """Whether OCR'd text could be an item tooltip at all: every tooltip has a "Rarity: X" line."""
+    return any(_rarity(row) for row in merge_rows(lines))
+
+
 def parse_tooltip(lines, index, title_bottom):
     """ParsedTooltip, or None unless a known item's title sits in the title bar (above
     `title_bottom`, crop pixels) and a "Rarity: X" line follows."""

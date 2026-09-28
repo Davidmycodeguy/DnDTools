@@ -219,3 +219,121 @@ def test_merchant_shop_prices_are_recorded_per_unit_keeping_the_cheapest():
     history.record_merchant_stock(_shop(("Bandage_2001", 1, 12)))   # another merchant sells it cheaper
     assert history.merchant_prices() == {"Bolt_2001": 2.0, "Bandage_2001": 12.0}
     assert history.merchant_price("Bolt_2001") == 2.0 and history.merchant_price("Ale_2001") is None
+
+
+def test_sold_since_counts_listings_that_vanished_recently():
+    clock = Clock()
+    history = _history(clock)
+    history.record_item_list(_page((1, "HeaterShield_5001", 300, 5 * DAY_MS, 17),
+                                   (2, "HeaterShield_5001", 320, 5 * DAY_MS, 12)))
+    clock.t += 3600
+    started = clock.t
+    history.record_item_list(_page((2, "HeaterShield_5001", 320, 5 * DAY_MS, 12)))
+    history.note_scan("HeaterShield_5001", started, max_price=500, complete=True)  # #1 sold now
+    assert history.sold_since("HeaterShield_5001", since=clock.t - 60) == 1
+    assert history.sold_since("HeaterShield_5001", since=clock.t + 60) == 0
+    assert history.sold_since("GemRing_5001", since=0) == 0
+
+
+def test_daily_medians_are_the_asks_open_each_day_oldest_first():
+    clock = Clock()
+    history = _history(clock)
+    day = DAY_MS / 1000
+    clock.t = 10 * day + 100
+    history.record_item_list(_page((1, "HeaterShield_5001", 300, 5 * DAY_MS, 17),
+                                   (2, "HeaterShield_5001", 340, 5 * DAY_MS, 12),
+                                   (3, "HeaterShield_5001", 500, 5 * DAY_MS, 12)))
+    clock.t = 11 * day + 100
+    history.record_item_list(_page((1, "HeaterShield_5001", 300, 5 * DAY_MS, 17),   # still up
+                                   (4, "HeaterShield_5001", 280, 5 * DAY_MS, 17)))
+    clock.t = 12 * day + 50
+    assert history.daily_medians("HeaterShield_5001", days=7) == [(10 * day, 340.0, 3), (11 * day, 290.0, 2)]
+    assert history.daily_medians("HeaterShield_5001", days=1) == [(11 * day, 290.0, 2)]
+    assert history.daily_medians("HeaterShield_5001", days=7, min_listings=3) == [(10 * day, 340.0, 3)]
+
+
+def test_recent_asks_are_every_open_listing_this_week_with_no_age_when_read_lately():
+    clock = Clock()
+    history = _history(clock)
+    history.record_item_list(_page((1, "HeaterShield_5001", 300, 5 * DAY_MS, 17),
+                                   (2, "HeaterShield_5001", 700, 5 * DAY_MS, 12)))   # a full read
+    clock.t += 5 * 3600
+    history.record_item_list(_page((1, "HeaterShield_5001", 300, 5 * DAY_MS, 17)))  # cheapest page only
+    clock.t += 60
+    asks, age = history.recent_asks("HeaterShield_5001", live_s=3600, fallback_s=7 * 86400)
+    assert (sorted(asks), age) == ([300.0, 700.0], None)
+
+
+def test_recent_asks_fall_back_to_older_open_listings_with_their_age():
+    clock = Clock()
+    history = _history(clock)
+    history.record_item_list(_page((1, "HeaterShield_5001", 300, 5 * DAY_MS, 17),
+                                   (2, "HeaterShield_5001", 900, 3600 * 1000, 12)))  # expires in an hour
+    clock.t += 7 * 3600
+    assert history.recent_asks("HeaterShield_5001", live_s=3600, fallback_s=7 * 86400) == ((300.0,), 7 * 3600)
+
+
+def test_recent_asks_are_empty_for_items_never_seen():
+    history = _history(Clock())
+    assert history.recent_asks("GemRing_5001", live_s=3600, fallback_s=7 * 86400) == ((), None)
+
+
+def test_a_re_read_alone_does_not_track_sales():
+    clock = Clock()
+    history = _history(clock)
+    history.record_item_list(_page((1, "HeaterShield_5001", 300, 5 * DAY_MS, 17),
+                                   (2, "HeaterShield_5001", 320, 5 * DAY_MS, 12)))
+    clock.t += 3600
+    history.record_item_list(_page((1, "HeaterShield_5001", 300, 5 * DAY_MS, 17)))  # #2 missing, but no scan ran
+    assert history.sales_tracked("HeaterShield_5001", since=0) is False
+
+
+def test_a_scan_after_the_listings_were_seen_tracks_sales():
+    clock = Clock()
+    history = _history(clock)
+    history.record_item_list(_page((1, "HeaterShield_5001", 300, 5 * DAY_MS, 17)))
+    clock.t += 3600
+    started = clock.t
+    history.record_item_list(_page((1, "HeaterShield_5001", 300, 5 * DAY_MS, 17)))
+    history.note_scan("HeaterShield_5001", started, max_price=500, complete=True)  # nothing sold, but it looked
+    assert history.sales_tracked("HeaterShield_5001", since=0) is True
+    assert history.sales_tracked("HeaterShield_5001", since=clock.t + 1) is False
+
+
+def test_a_full_crawl_pass_of_the_rarity_tracks_sales():
+    clock = Clock()
+    history = _history(clock)
+    history.record_item_list(_page((1, "HeaterShield_5001", 300, 5 * DAY_MS, 17)))
+    clock.t += 3600
+    started = clock.t
+    history.record_item_list(_page((1, "HeaterShield_5001", 300, 5 * DAY_MS, 17)))
+    history.note_crawl_pass(4, started)                                   # Rare: says nothing about Epic
+    assert history.sales_tracked("HeaterShield_5001", since=0) is False
+    history.note_crawl_pass(5, started)
+    assert history.sales_tracked("HeaterShield_5001", since=0) is True
+
+
+def test_a_sale_seen_means_sales_are_tracked():
+    clock = Clock()
+    history = _history(clock)
+    history.record_item_list(_page((1, "HeaterShield_5001", 300, 5 * DAY_MS, 17)))
+    clock.t += 3600
+    started = clock.t
+    history.note_scan("HeaterShield_5001", started, max_price=500, complete=True)  # #1 sold
+    assert history.sales_tracked("HeaterShield_5001", since=0) is True
+
+
+
+def test_our_own_listings_are_not_market_asks():
+    clock = Clock()
+    history = _history(clock)
+    history.record_item_list(_page((41875349, "GreatHelm_3001", 200, 5 * DAY_MS, 3),
+                                   (7, "GreatHelm_3001", 260, 5 * DAY_MS, 3)))
+    mine = MarketPlace_pb2.SS2C_MARKETPLACE_MY_ITEM_LIST_RES()
+    info = mine.myItemInfos.add()
+    info.itemInfo.listingId = 41875349
+    info.itemInfo.price = 200
+    info.itemInfo.item.itemId = "DesignDataItem:Id_Item_GreatHelm_3001"
+    info.myItemState = 1
+    history.record_my_listings(mine)
+    assert history.recent_asks("GreatHelm_3001", live_s=3600, fallback_s=7 * 86400) == ((260.0,), None)

@@ -8,11 +8,11 @@ show/hide only store the request and post a message.
 import ctypes
 import logging
 import threading
+import time
 from ctypes import wintypes
 
-import numpy as np
-
 from src.models.hover_card import render_card
+from src.models.screen_grab import gdi, top_down_32bpp
 
 logger = logging.getLogger(__name__)
 
@@ -45,11 +45,9 @@ def place_panel(size, tooltip, screen):
 
 
 def premultiplied_bgra(image):
-    """Raw BGRA bytes with colour premultiplied by alpha, as UpdateLayeredWindow expects."""
-    rgba = np.asarray(image.convert("RGBA"), dtype=np.uint16)
-    alpha = rgba[..., 3:4]
-    rgb = (rgba[..., :3] * alpha // 255).astype(np.uint8)
-    return np.dstack([rgb[..., 2], rgb[..., 1], rgb[..., 0], rgba[..., 3].astype(np.uint8)]).tobytes()
+    """Raw BGRA bytes with colour premultiplied by alpha, as UpdateLayeredWindow expects.
+    PIL's own premultiplied mode ("RGBa") does it ~4x faster than numpy."""
+    return image.convert("RGBA").convert("RGBa").tobytes("raw", "BGRa")
 
 
 class _BlendFunction(ctypes.Structure):
@@ -57,36 +55,13 @@ class _BlendFunction(ctypes.Structure):
                 ("SourceConstantAlpha", ctypes.c_ubyte), ("AlphaFormat", ctypes.c_ubyte)]
 
 
-class _BitmapInfoHeader(ctypes.Structure):
-    _fields_ = [("biSize", wintypes.DWORD), ("biWidth", wintypes.LONG), ("biHeight", wintypes.LONG),
-                ("biPlanes", wintypes.WORD), ("biBitCount", wintypes.WORD), ("biCompression", wintypes.DWORD),
-                ("biSizeImage", wintypes.DWORD), ("biXPelsPerMeter", wintypes.LONG),
-                ("biYPelsPerMeter", wintypes.LONG), ("biClrUsed", wintypes.DWORD), ("biClrImportant", wintypes.DWORD)]
-
-
-class _BitmapInfo(ctypes.Structure):
-    _fields_ = [("bmiHeader", _BitmapInfoHeader), ("bmiColors", wintypes.DWORD * 3)]
-
-
 def _gdi():  # pragma: no cover - Windows only
-    """user32/gdi32 with handle-safe signatures (64-bit handles must not be truncated to int)."""
-    user32, gdi32 = ctypes.windll.user32, ctypes.windll.gdi32
-    user32.GetDC.restype = wintypes.HDC
-    user32.GetDC.argtypes = [wintypes.HWND]
-    user32.ReleaseDC.argtypes = [wintypes.HWND, wintypes.HDC]
+    """screen_grab's handle-safe user32/gdi32, plus UpdateLayeredWindow."""
+    user32, gdi32 = gdi()
     user32.UpdateLayeredWindow.argtypes = [wintypes.HWND, wintypes.HDC, ctypes.POINTER(wintypes.POINT),
                                            ctypes.POINTER(wintypes.SIZE), wintypes.HDC,
                                            ctypes.POINTER(wintypes.POINT), wintypes.COLORREF,
                                            ctypes.POINTER(_BlendFunction), wintypes.DWORD]
-    gdi32.CreateCompatibleDC.restype = wintypes.HDC
-    gdi32.CreateCompatibleDC.argtypes = [wintypes.HDC]
-    gdi32.CreateDIBSection.restype = wintypes.HBITMAP
-    gdi32.CreateDIBSection.argtypes = [wintypes.HDC, ctypes.POINTER(_BitmapInfo), wintypes.UINT,
-                                       ctypes.POINTER(ctypes.c_void_p), wintypes.HANDLE, wintypes.DWORD]
-    gdi32.SelectObject.restype = wintypes.HGDIOBJ
-    gdi32.SelectObject.argtypes = [wintypes.HDC, wintypes.HGDIOBJ]
-    gdi32.DeleteObject.argtypes = [wintypes.HGDIOBJ]
-    gdi32.DeleteDC.argtypes = [wintypes.HDC]
     return user32, gdi32
 
 
@@ -96,12 +71,9 @@ def _blit(hwnd, image, x, y):  # pragma: no cover - Windows only
     width, height = image.size
     screen_dc = user32.GetDC(None)
     memory_dc = gdi32.CreateCompatibleDC(screen_dc)
-    info = _BitmapInfo()
-    info.bmiHeader.biSize = ctypes.sizeof(_BitmapInfoHeader)
-    info.bmiHeader.biWidth, info.bmiHeader.biHeight = width, -height  # top-down rows
-    info.bmiHeader.biPlanes, info.bmiHeader.biBitCount = 1, 32
     bits = ctypes.c_void_p()
-    bitmap = gdi32.CreateDIBSection(memory_dc, ctypes.byref(info), 0, ctypes.byref(bits), None, 0)
+    bitmap = gdi32.CreateDIBSection(memory_dc, ctypes.byref(top_down_32bpp(width, height)), 0, ctypes.byref(bits),
+                                    None, 0)
     try:
         data = premultiplied_bgra(image)
         ctypes.memmove(bits, data, len(data))
@@ -145,7 +117,7 @@ class HoverPanel:
     def show(self, card, tooltip, screen):
         self._ensure_started()
         with self._lock:
-            self._request = (card, tuple(tooltip), tuple(screen))
+            self._request = (card, tuple(tooltip), tuple(screen), time.perf_counter())
         self._post(WM_APP_SHOW)
 
     def hide(self):
@@ -184,10 +156,14 @@ class HoverPanel:
             request, self._request = self._request, None
         if request is None:
             return
-        card, tooltip, screen = request
+        card, tooltip, screen, asked = request
+        started = time.perf_counter()
         image = self._render(card, screen[1])
+        rendered = time.perf_counter()
         x, y = place_panel(image.size, tooltip, screen)
         _blit(hwnd, image, x, y)
+        logger.debug("Hover card window: waited %.0f ms, drew %.0f ms, blit %.0f ms", 1000 * (started - asked),
+                    1000 * (rendered - started), 1000 * (time.perf_counter() - rendered))
         win32gui.ShowWindow(hwnd, win32con.SW_SHOWNOACTIVATE)
         win32gui.SetWindowPos(hwnd, win32con.HWND_TOPMOST, 0, 0, 0, 0,
                               win32con.SWP_NOMOVE | win32con.SWP_NOSIZE | win32con.SWP_NOACTIVATE)

@@ -3,12 +3,15 @@ import hashlib
 from collections import OrderedDict
 
 import numpy as np
+from PIL import Image
 
-from src.models.tooltip_finder import TITLE_HEIGHT_PX, find_tooltips
-from src.models.tooltip_parser import parse_tooltip
+from src.models.tooltip_finder import (RULE_GROUP_PX, TITLE_HEIGHT_PX, find_tooltips, measure, nearness, probe,
+                                      rule_still_there)
+from src.models.tooltip_parser import looks_like_tooltip, parse_tooltip
 
 MAX_CANDIDATES = 3   # fixed UI lines can look like title rules; each costs one ~25 ms read
 CACHE_SIZE = 64      # screens already read (a tooltip stays up while the cursor rests)
+NOT_TOOLTIPS_SIZE = 256  # fixed UI lines found to be no tooltip, remembered by where they are
 OCR_BASE_SCALE = 0.5  # 4K text is read best at half size; smaller screens at full size
 SIGNATURE_SIZE = (48, 48)
 
@@ -19,6 +22,9 @@ class TooltipReader:
         self._index = index
         self._candidates = candidates
         self._cache = OrderedDict()  # crop signature -> ParsedTooltip | None
+        self._rest = None            # (cursor, scale, screen) of the rest being looked at
+        self._rejected = set()       # probe rows found to be no tooltip during this rest
+        self._not_tooltips = OrderedDict()  # rule geometry of fixed UI lines (no "Rarity:" line under them)
 
     def read(self, image, cursor, scale):
         """(ParsedTooltip, TooltipBox) for the tooltip nearest `cursor` in `image`, or None."""
@@ -29,18 +35,71 @@ class TooltipReader:
                 return parsed, box
         return None
 
+    def read_screen(self, grab, cursor, scale, screen):
+        """(ParsedTooltip, TooltipBox) for the tooltip beside `cursor`, grabbing only the screen
+        regions needed, or None. `grab(region)` returns a region's RGB pixels; the box is in screen
+        pixels. Called over and over while the cursor rests: rows that turned out to be fixed UI
+        lines are skipped until their pixels change, so a look usually costs two strip grabs."""
+        rest = (tuple(cursor), scale, tuple(screen))
+        if rest != self._rest:
+            self._rest, self._rejected = rest, set()
+        candidates = []  # (box, row signature)
+        for row, signature in probe(grab, cursor, scale, screen):
+            if signature in self._rejected:
+                continue
+            boxes = measure(grab, row, cursor, scale, screen, self._candidates)
+            if not boxes:
+                self._rejected.add(signature)
+            candidates += [(box, signature) for box in boxes]
+        near = nearness(cursor, scale)
+        candidates.sort(key=lambda c: near(c[0]))
+        failed = set()
+        for box, signature in candidates[:self._candidates]:
+            place = _place(box)
+            if place in self._not_tooltips:  # a fixed UI line seen before: no grab, no OCR
+                failed.add(signature)
+                continue
+            crop = Image.fromarray(np.ascontiguousarray(grab(box.ocr_region(screen[0], screen[1], scale))))
+            parsed, tooltip_like = self._read_crop(crop, scale)
+            if parsed is not None:
+                return parsed, box
+            if not tooltip_like:
+                self._not_tooltips[place] = True
+                if len(self._not_tooltips) > NOT_TOOLTIPS_SIZE:
+                    self._not_tooltips.popitem(last=False)
+            failed.add(signature)
+        self._rejected |= failed - {signature for _, signature in candidates[self._candidates:]}
+        return None
+
+    def still_showing(self, grab, cursor, scale, screen, box):
+        """Whether the tooltip `box` (screen pixels) is still up: one thin grab over its rule."""
+        band = max(2, round(RULE_GROUP_PX * scale))
+        return rule_still_there(grab((box.left, max(0, box.rule_y - band), box.right,
+                                      min(screen[1], box.rule_y + band + 1))), box.color)
+
     def _read_box(self, image, box, scale):
-        crop = image.crop(box.ocr_region(image.width, image.height, scale))
+        return self._read_crop(image.crop(box.ocr_region(image.width, image.height, scale)), scale)[0]
+
+    def _read_crop(self, crop, scale):
+        """(ParsedTooltip | None, whether the text could be a tooltip at all) for a tooltip-sized crop."""
         key = hashlib.sha1(crop.convert("L").resize(SIGNATURE_SIZE).tobytes()).hexdigest()
         if key in self._cache:
             self._cache.move_to_end(key)
             return self._cache[key]
         factor = min(1.0, OCR_BASE_SCALE / scale) if scale > 0 else 1.0
-        if factor < 1.0:
-            crop = crop.resize((max(1, round(crop.width * factor)), max(1, round(crop.height * factor))))
-        parsed = parse_tooltip(self._ocr.read(crop), self._index, TITLE_HEIGHT_PX * scale * factor)
-        self._cache[key] = parsed
+        if factor == 0.5:
+            crop = crop.reduce(2)  # 4K: a box average, ~10x faster than resize and as readable
+        elif factor < 1.0:
+            crop = crop.resize((max(1, round(crop.width * factor)), max(1, round(crop.height * factor))),
+                               Image.BILINEAR)
+        lines = self._ocr.read(crop)
+        result = (parse_tooltip(lines, self._index, TITLE_HEIGHT_PX * scale * factor), looks_like_tooltip(lines))
+        self._cache[key] = result
         if len(self._cache) > CACHE_SIZE:
             self._cache.popitem(last=False)
-        return parsed
+        return result
 
+
+def _place(box):
+    """Where a rule is and its colour, loosely (measurements wobble by a pixel or two)."""
+    return box.rule_y // 4, box.left // 8, box.right // 8, tuple(c // 16 for c in box.color)

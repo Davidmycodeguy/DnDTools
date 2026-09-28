@@ -13,6 +13,8 @@ import uuid
 from dataclasses import dataclass
 from pathlib import Path
 
+from PIL import Image
+
 OCR_SCRIPT = Path(__file__).with_name("win_ocr.ps1")
 READ_TIMEOUT_S = 5.0
 START_TIMEOUT_S = 15.0
@@ -95,18 +97,31 @@ class WindowsOcr:
         if process is not None and process.poll() is None:
             process.kill()
 
+    def start(self):
+        """Boot the worker now (it takes ~0.5-0.8 s) and warm up recognition (the first read is
+        ~5x slower than the rest), so the first real read doesn't wait for either."""
+        with self._lock:
+            if self._process is not None:
+                return
+            self._ensure_running()
+        self.read(Image.new("RGB", (64, 32)))
+
+    def _ensure_running(self):
+        if self._process is None:
+            try:
+                self._start()
+            except OcrError:
+                self._stop()
+                raise
+
     def read(self, image):
         """OCR a PIL image; lines with their boxes in the image's pixels."""
-        path = os.path.join(self._temp_dir, f"dndtools-ocr-{uuid.uuid4().hex}.png")
+        # BMP: uncompressed, so saving takes <1 ms where PNG took ~20 ms.
+        path = os.path.join(self._temp_dir, f"dndtools-ocr-{uuid.uuid4().hex}.bmp")
         image.save(path)
         try:
             with self._lock:
-                if self._process is None:
-                    try:
-                        self._start()
-                    except OcrError:
-                        self._stop()
-                        raise
+                self._ensure_running()
                 self._process.stdin.write(path + "\n")
                 self._process.stdin.flush()
                 return parse_answer(self._next_answer(self._timeout))

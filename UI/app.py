@@ -3053,24 +3053,51 @@ def _hover_values_enabled():
             and not market_lister_job.is_running() and not _sort_is_running())
 
 
+HOVER_TREND_DAYS = 14
+HOVER_TREND_MIN_LISTINGS = 5  # a day with fewer open listings says little about the price level
+WEEK_S = 7 * 24 * 3600
+
+
+def _hover_market(item_id):
+    """Open asks (live, else the past week's with their age), last week's sales and the daily
+    price trend for the hover card."""
+    from src.models.hover_card import MarketFacts
+    if not market_history:
+        return MarketFacts()
+    asks, seen_ago = market_history.recent_asks(item_id, HISTORY_MAX_AGE_S, WEEK_S)
+    return MarketFacts(
+        asks=asks, seen_ago_s=seen_ago,
+        sold_week=market_history.sold_since(item_id, time.time() - WEEK_S),
+        sales_tracked=market_history.sales_tracked(item_id, time.time() - WEEK_S),
+        trend=tuple(median for _, median, _ in market_history.daily_medians(
+            item_id, HOVER_TREND_DAYS, min_listings=HOVER_TREND_MIN_LISTINGS)))
+
+
+def _hover_item(item_id):
+    """What the item is (type line, icon), what a merchant pays and how many cells it takes."""
+    from src.models.hover_card import ItemFacts, item_kind
+    meta = item_data_manager.get_item_data(item_id) or {}
+    icon = item_data_manager.get_item_image_path_from_id(item_id)
+    return ItemFacts(kind=item_kind(meta), icon=resource_path(str(icon)) if icon else None,
+                     merchant=int(meta.get("vendor_price") or 0),
+                     slots=int(meta.get("inventory_width") or 1) * int(meta.get("inventory_height") or 1))
+
+
 def _hover_card(tip):
     from src.models.hover_card import build_card
     model = _worth_model()
     estimate = model.predict(tip.item_id, tip.rolls) if model is not None else None
     if estimate is not None and estimate.confidence == "unknown":
         estimate = None
-    rows = market_history.active_rows(tip.item_id, HISTORY_MAX_AGE_S) if market_history else []
-    units = [row.price / max(row.count, 1) for row in rows]
-    sold = len(market_history.vanished_rows(tip.item_id)) if market_history else 0
-    meta = item_data_manager.get_item_data(tip.item_id) or {}
-    slots = int(meta.get("inventory_width") or 1) * int(meta.get("inventory_height") or 1)
-    return build_card(tip, estimate, min(units) if units else None, len(units), sold,
-                      int(meta.get("vendor_price") or 0), slots)
+    return build_card(tip, estimate, _hover_market(tip.item_id), _hover_item(tip.item_id))
 
 
 def _game_in_front():
     import win32gui
-    return win32gui.GetWindowText(win32gui.GetForegroundWindow()) == GAME_WINDOW_TITLE
+    from src.models.game_window import game_has_focus
+    game = win32gui.FindWindow(None, GAME_WINDOW_TITLE)
+    shown = bool(game) and win32gui.IsWindowVisible(game) and not win32gui.IsIconic(game)
+    return game_has_focus(win32gui.GetWindowText(win32gui.GetForegroundWindow()), GAME_WINDOW_TITLE, shown)
 
 
 def _cursor_position():
@@ -3087,20 +3114,27 @@ def _screen_size():
 
 
 def _start_hover_values():
-    from PIL import ImageGrab
     from src.models.hover_loop import HoverLoop
     from src.models.hover_panel import HoverPanel
     from src.models.hover_reader import TooltipReader
+    from src.models.screen_grab import grab
     from src.models.tooltip_parser import ItemIndex
-    from src.models.win_ocr import WindowsOcr
+    from src.models.win_ocr import OcrError, WindowsOcr
+    ocr = WindowsOcr()
     loop = HoverLoop(
-        cursor=_cursor_position, game_active=_game_in_front, grab=lambda region: ImageGrab.grab(bbox=region),
-        screen_size=_screen_size, reader=TooltipReader(WindowsOcr(), ItemIndex(item_data_manager.all_items())),
-        value_of=_hover_card, panel=HoverPanel(), enabled=_hover_values_enabled,
+        cursor=_cursor_position, game_active=_game_in_front, grab=grab, screen_size=_screen_size,
+        reader=TooltipReader(ocr, ItemIndex(item_data_manager.all_items())), value_of=_hover_card,
+        panel=HoverPanel(), enabled=_hover_values_enabled,
     )
+
     def run():
         from src.models.hover_panel import use_physical_pixels
         use_physical_pixels()  # cursor, screen size and captures must all be in real pixels
+        try:
+            ocr.start()  # boot OCR now (~0.5-0.8 s), not on the first hover
+        except OcrError:
+            logger.warning("Hover values are off: Windows text recognition is unavailable", exc_info=True)
+            return
         loop.run(hover_values_stop)
     threading.Thread(target=run, daemon=True, name="HoverValues").start()
 
