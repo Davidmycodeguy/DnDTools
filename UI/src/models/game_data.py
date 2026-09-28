@@ -87,6 +87,11 @@ class ItemDataManager:
         # Replace underscores with spaces
         return cleaned.replace('_', ' ').strip()
 
+    def all_items(self) -> Dict:
+        """Every item record, by item id (a copy)."""
+        self._ensure_loaded()
+        return dict(self._data)
+
     def get_item_vendor_price(self, item_id):
         """Get vendor price for an item"""
         self._ensure_loaded()

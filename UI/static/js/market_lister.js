@@ -324,6 +324,27 @@
             `${r.name}: ${RESULT_LABELS[r.status] || r.status}${r.message ? ` — ${r.message}` : ''}`, `ml-result-${r.status}`)));
     };
 
+    // --- Hover values: item value beside the game's tooltip ---
+    const loadHoverValues = async () => {
+        try {
+            const data = await api('', {}, '/api/hover-values');
+            $('mlHoverValues').checked = Boolean(data.enabled);
+        } catch (error) {
+            $('mlHoverValues').disabled = true;
+        }
+    };
+
+    const saveHoverValues = async () => {
+        const enabled = $('mlHoverValues').checked;
+        try {
+            await api('', { method: 'POST', body: JSON.stringify({ enabled }) }, '/api/hover-values');
+            notify(enabled ? 'In-game values on.' : 'In-game values off.', 'success');
+        } catch (error) {
+            $('mlHoverValues').checked = !enabled;
+            notify(error.message, 'error');
+        }
+    };
+
     // --- Sell to merchant: skipped items a merchant pays more for (or not worth listing) ---
     const UNPRICED_REASON = 'below minimum rarity'; // never priced on the market: opt in, don't pre-tick
     let merchantRows = [];
@@ -568,6 +589,8 @@
             'Deep crawl started — this reads a few hundred pages…'));
         $('mlAnalyze').addEventListener('click', analyzeMarket);
         $('mlWorthTrain').addEventListener('click', trainWorthModel);
+        loadHoverValues();
+        $('mlHoverValues').addEventListener('change', saveHoverValues);
         $('mlPriceQuery').addEventListener('input', () => {
             clearTimeout(priceQueryTimer);
             priceQueryTimer = setTimeout(searchPrices, 300);

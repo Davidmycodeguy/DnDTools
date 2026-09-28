@@ -3040,6 +3040,79 @@ def _merchant_runner_factory(event):
 
 market_lister_job = ListerJob(_lister_runner_factory, _lister_hover_factory, _merchant_runner_factory)
 
+# ── Hover values: the value of the item under the cursor, read from the game's own tooltip ──
+HOVER_VALUES_KEY = 'hoverValues'
+hover_values_stop = threading.Event()
+
+
+def _hover_values_enabled():
+    """On unless switched off; paused while the lister or the sorter drives the mouse."""
+    if globals().get('api') is None:  # the app is still starting up
+        return False
+    return (settings_manager.get(HOVER_VALUES_KEY, True) is not False
+            and not market_lister_job.is_running() and not _sort_is_running())
+
+
+def _hover_value_lines(tip):
+    from src.models.hover_reader import describe_value
+    model = _worth_model()
+    estimate = model.predict(tip.item_id, tip.rolls) if model is not None else None
+    if estimate is not None and estimate.confidence == "unknown":
+        estimate = None
+    rows = market_history.active_rows(tip.item_id, HISTORY_MAX_AGE_S) if market_history else []
+    units = [row.price / max(row.count, 1) for row in rows]
+    lowest = (min(units), len(units)) if units else None
+    return describe_value(tip, estimate, lowest, int(item_data_manager.get_item_vendor_price(tip.item_id) or 0))
+
+
+def _game_in_front():
+    import win32gui
+    return win32gui.GetWindowText(win32gui.GetForegroundWindow()) == GAME_WINDOW_TITLE
+
+
+def _cursor_position():
+    import ctypes
+    from ctypes import wintypes
+    point = wintypes.POINT()
+    ctypes.windll.user32.GetCursorPos(ctypes.byref(point))
+    return (point.x, point.y)
+
+
+def _screen_size():
+    import ctypes
+    return (ctypes.windll.user32.GetSystemMetrics(0), ctypes.windll.user32.GetSystemMetrics(1))
+
+
+def _start_hover_values():
+    from PIL import ImageGrab
+    from src.models.hover_loop import HoverLoop
+    from src.models.hover_panel import HoverPanel
+    from src.models.hover_reader import TooltipReader
+    from src.models.tooltip_parser import ItemIndex
+    from src.models.win_ocr import WindowsOcr
+    loop = HoverLoop(
+        cursor=_cursor_position, game_active=_game_in_front, grab=lambda region: ImageGrab.grab(bbox=region),
+        screen_size=_screen_size, reader=TooltipReader(WindowsOcr(), ItemIndex(item_data_manager.all_items())),
+        value_of=_hover_value_lines, panel=HoverPanel(), enabled=_hover_values_enabled,
+    )
+    def run():
+        from src.models.hover_panel import use_physical_pixels
+        use_physical_pixels()  # cursor, screen size and captures must all be in real pixels
+        loop.run(hover_values_stop)
+    threading.Thread(target=run, daemon=True, name="HoverValues").start()
+
+
+@server.route('/api/hover-values', methods=['GET', 'POST'])
+def api_hover_values():
+    if request.method == 'POST':
+        payload = request.get_json(silent=True)
+        enabled = payload.get('enabled') if isinstance(payload, dict) else None
+        if not isinstance(enabled, bool):
+            return jsonify({'success': False, 'error': 'enabled must be true or false'}), 400
+        settings_manager.update({HOVER_VALUES_KEY: enabled})
+    return jsonify({'success': True, 'enabled': settings_manager.get(HOVER_VALUES_KEY, True) is not False})
+
+
 
 def _sort_is_running():
     """Read-only: True while a sort / transfer holds the single sort slot."""
@@ -3100,6 +3173,10 @@ if not _is_child_process:
         train=_train_worth_model,
         info=_worth_model_info,
     )))
+    try:
+        _start_hover_values()  # after everything it reads (settings, jobs, sort state) exists
+    except Exception:  # never block the app over the overlay
+        logger.exception("Hover values could not start")
 
 @server.route('/api/download_update')
 def download_update():

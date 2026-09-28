@@ -121,6 +121,23 @@ were already in the Sell box, press Escape in the game to put them back. If the 
 something that wasn't picked, the run stops and names it. Buy it back from the merchant's
 **Buyback** tab straight away, because only the most recent sale can be bought back.
 
+## In-game item values (hover)
+
+Rest the cursor on an item in the game — stash, Marketplace, merchants or a dungeon chest — and a
+small panel appears beside the game's tooltip with what the item is worth for its exact rolls
+(the Item Worth model), the lowest current ask from your saved market data, and what a merchant
+pays. Toggle it under **Item value model** on the Market page.
+
+How it works: when the cursor settles, DnDTools captures the screen around it and finds the
+tooltip by the coloured rule under its title. It reads the tooltip with **Windows' built-in text
+recognition** (nothing to install, nothing leaves your PC), matches the title and rarity to the
+item list, and turns the stat lines into rolls. The panel is click-through and never takes focus,
+so the game keeps every input; it pauses while the lister or the sorter is driving the mouse.
+
+Limits: Poor items are skipped (their rule is too faint to find, and they only sell to merchants),
+and items with no saved market data show only the merchant price until the market has been
+crawled for their rarity.
+
 ## Market data (local history)
 
 Every Marketplace page DnDTools sees is saved to `%LOCALAPPDATA%/DnDTools/data/market_history.sqlite`
