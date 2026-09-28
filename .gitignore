@@ -79,3 +79,6 @@ nodejs/.env
 !/UI/tests/test_roll_pricing.py
 !/UI/tests/test_market_history.py
 !/UI/tests/test_market_patterns.py
+
+# Starter data is exported at release time (UI/scripts/export_starter_data.py)
+UI/assets/starter_data/

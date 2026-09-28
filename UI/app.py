@@ -256,6 +256,13 @@ else:
     except Exception as e:
         logger.error(f"Failed to migrate data files: {e}")
 
+    # A new install starts with the shipped market history and price models (never overwrites).
+    try:
+        from src.models.starter_data import install_starter_data
+        install_starter_data(resource_path("starter_data"), get_data_dir())
+    except Exception as e:
+        logger.error(f"Failed to install starter data: {e}")
+
     quest_service = QuestService(logger)
     CHARACTER_STORAGE_PROTECTED_FILES = set(quest_service.protected_filenames)
 
